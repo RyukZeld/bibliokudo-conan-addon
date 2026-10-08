@@ -117,15 +117,15 @@ export const GENRE_TEMPORADAS = 'Temporadas';
 export const GENRE_SERIE = 'Serie';
 export const GENRE_ESPECIALES = 'OVAs / Especiales';
 
+/** Slim catalog chips — only guides + movies + specials. */
 export const BIBLIOTECA_GENRES = [
-  GENRE_SERIE,
   GENRE_GUIAS,
-  GENRE_PERSONAJES,
-  GENRE_EXTRAS,
-  GENRE_ARCOS,
+  'Películas',
   GENRE_ESPECIALES,
-  GENRE_TEMPORADAS,
 ];
+
+/** The only watch-order lists shown in Biblioteca home. */
+export const CORE_GUIDE_IDS = ['lista-a', 'lista-b', 'lista-c', 'lista-d'];
 
 /** Preferred order inside Personajes (rest follow alphabetically by short). */
 const PERSONAJE_ORDER = [
@@ -468,24 +468,32 @@ export function listMeta(list, index, { full = false } = {}) {
 
   const badge = groupLabel(list.group);
   const subtitle = list.name.replace(/^Lista [A-D]\s*[—–-]\s*/i, '').trim();
+  const guideNames = {
+    'lista-a': 'Lista A · Casi completo',
+    'lista-b': 'Lista B · Recomendada',
+    'lista-c': 'Lista C · Esencial',
+    'lista-d': 'Lista D · Repaso / spoilers',
+    'movies-all': 'Películas',
+    'solo-peliculas': 'Películas (orden guía)',
+  };
   const displayName =
-    list.group === 'guias'
+    guideNames[list.id] ||
+    (list.group === 'guias'
       ? `${list.short} · ${subtitle}`
-      : `${badge} · ${list.short}`;
+      : `${badge} · ${list.short}`);
 
-  const genreChip = genreForGroup(list.group);
+  const genreChip =
+    list.id === 'movies-all' || list.id === 'solo-peliculas'
+      ? 'Películas'
+      : genreForGroup(list.group);
   const recommended = list.id === 'lista-b' ? ' · Recomendada' : '';
-  const spoilers =
-    list.id === 'lista-d' || /spoiler/i.test(list.description || '')
-      ? ' · Spoilers'
-      : '';
+  const spoilers = list.id === 'lista-d' ? ' · Spoilers' : '';
 
   const parts = [
     list.description?.trim() || list.name,
     blurbForList(list),
     '',
-    `En orden de la guía · ${list.itemCount} entradas`,
-    `· ${eps} caps · ${movies} películas · ${ovas} OVAs · ${specials} especiales`,
+    `${list.itemCount} entradas en orden · ${eps} caps · ${movies} películas · ${ovas} OVAs · ${specials} especiales`,
     '',
     'Añádela a tu biblioteca para seguir el progreso.',
   ];

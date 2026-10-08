@@ -1,6 +1,6 @@
 {
   "name": "bibliokudo-conan-addon",
-  "version": "1.7.0",
+  "version": "1.7.1",
   "description": "Stremio/Nuvio addon for Detective Conan ES: Biblioteca, guides, arcs, softsubs, poster proxy",
   "type": "module",
   "main": "src/server.js",

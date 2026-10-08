@@ -25,22 +25,16 @@ import {
   getList,
   listMeta,
   seasonMeta,
-  listSeasonNumbers,
   findMovieInIndex,
   listMatchesQuery,
-  listsOrdered,
   BIBLIOTECA_GENRES,
   GENRE_GUIAS,
-  GENRE_PERSONAJES,
-  GENRE_EXTRAS,
-  GENRE_ARCOS,
-  GENRE_TEMPORADAS,
-  GENRE_SERIE,
   GENRE_ESPECIALES,
+  CORE_GUIDE_IDS,
   proxiedSeriesArt,
 } from './watch-lists.js';
 import {
-  allListsIncludingSynthetic,
+  buildMoviesAllList,
   getSyntheticList,
 } from './synthetic-lists.js';
 import { findEpisode, findSpecial, findMovie } from './index-maps.js';
@@ -67,10 +61,10 @@ const MAX_RESOLVE = 3;
 
 export const manifest = {
   id: 'community.bibliokudo.detectiveconan',
-  version: '1.7.0',
+  version: '1.7.1',
   name: 'Detective Conan (BiblioKudo ES)',
   description:
-    'Biblioteca Conan: serie, Listas A–D, personajes, extras, OVAs y temporadas. Filtra por género. Streams BiblioKudo + softsubs ES.',
+    'Detective Conan ES: Listas A–D, películas y especiales. Streams BiblioKudo + softsubs.',
   logo: artProxyUrl('logo'),
   background: artProxyUrl('series-bg'),
   resources: [
@@ -178,110 +172,71 @@ function filterBySearch(metas, q) {
   return metas.filter((m) => metaMatchesSearch(m, q));
 }
 
-function listsAsMetas(index, { group, ids, q } = {}) {
-  let lists = allListsIncludingSynthetic(index);
-  const orderedIds = listsOrdered().map((l) => l.id);
-  const groupRank = (g) =>
-    ({ guias: 0, personajes: 1, extras: 2, arcos: 3 }[g] ?? 9);
-  lists.sort((a, b) => {
-    const gr = groupRank(a.group) - groupRank(b.group);
-    if (gr) return gr;
-    const ia = orderedIds.indexOf(a.id);
-    const ib = orderedIds.indexOf(b.id);
-    if (ia !== -1 || ib !== -1) {
-      return (ia === -1 ? 900 : ia) - (ib === -1 ? 900 : ib);
-    }
-    return String(a.short || a.id).localeCompare(String(b.short || b.id));
-  });
-  if (group) lists = lists.filter((l) => l.group === group);
-  if (ids) {
-    const set = new Set(ids);
-    lists = lists.filter((l) => set.has(l.id));
-    lists.sort((a, b) => ids.indexOf(a.id) - ids.indexOf(b.id));
-  }
+function guideMetas(index, { q } = {}) {
+  let lists = CORE_GUIDE_IDS.map((id) => getList(id)).filter(Boolean);
   if (q) lists = lists.filter((l) => listMatchesQuery(l, q));
-  return lists.map((l) => listMeta(l, index, { full: false }));
+  return lists.map((l) => {
+    const meta = listMeta(l, index, { full: false });
+    // Clean display names for the slim board
+    const labels = {
+      'lista-a': 'Lista A · Casi completo',
+      'lista-b': 'Lista B · Recomendada',
+      'lista-c': 'Lista C · Esencial',
+      'lista-d': 'Lista D · Repaso / spoilers',
+    };
+    if (labels[l.id]) meta.name = labels[l.id];
+    return meta;
+  });
+}
+
+function moviesPlaylistMeta(index) {
+  const list = buildMoviesAllList(index);
+  const meta = listMeta(list, index, { full: false });
+  meta.name = 'Películas';
+  meta.releaseInfo = `${list.itemCount} películas`;
+  return meta;
 }
 
 function normalizeGenre(g) {
   const n = normalizeQ(g);
   if (!n || n === 'todas' || n === 'todo' || n === 'all') return '';
-  if (/guia/.test(n)) return GENRE_GUIAS;
-  if (/personaje/.test(n)) return GENRE_PERSONAJES;
+  if (/guia|lista/.test(n)) return GENRE_GUIAS;
   if (/ova|especial/.test(n)) return GENRE_ESPECIALES;
-  if (/arco/.test(n)) return GENRE_ARCOS;
-  if (/extra|relleno|caso|canon|pelicula/.test(n)) return GENRE_EXTRAS;
-  if (/temp/.test(n)) return GENRE_TEMPORADAS;
-  if (/serie/.test(n)) return GENRE_SERIE;
+  if (/pelicula|movie|film/.test(n)) return 'Películas';
   const hit = BIBLIOTECA_GENRES.find((x) => normalizeQ(x) === n);
   return hit || '';
 }
 
-/** Nuvio/Search often queries with just "conan" — show the full board, not 3 hits. */
+/** Nuvio/Search often queries with just "conan" — show the full slim board. */
 function isBroadConanQuery(q) {
   const nq = normalizeQ(q);
   if (!nq) return true;
-  return /^(conan|detective|detective conan|meitantei|meitantei conan|case closed|biblioteca|biblioteca conan|serie|serie completa)$/.test(
+  return /^(conan|detective|detective conan|meitantei|meitantei conan|case closed|biblioteca|biblioteca conan)$/.test(
     nq
   );
 }
 
 /**
- * Home board: Destacados → Serie + listas (+ OVAs/arcos).
- * Temporadas solo con el chip «Temporadas» (así no tapan las listas).
+ * Biblioteca home (slim): Lista A → B → C → D → Películas → Especiales.
  */
-function buildBiblioteca(index, { genre, q, skip = 0, config } = {}) {
+function buildBiblioteca(index, { genre, q, skip = 0 } = {}) {
   if (q && !isBroadConanQuery(q)) return searchBiblioteca(index, q);
 
-  const cfg = config || loadConfig();
   const g = normalizeGenre(genre);
   const out = [];
-  const seen = new Set();
-  const push = (m) => {
-    if (!m?.id || seen.has(m.id)) return;
-    seen.add(m.id);
-    out.push(m);
-  };
-
-  const wantSerie = !g || g === GENRE_SERIE;
   const wantGuias = !g || g === GENRE_GUIAS;
-  const wantPers = !g || g === GENRE_PERSONAJES;
-  const wantExtras = !g || g === GENRE_EXTRAS;
-  const wantArcos = !g || g === GENRE_ARCOS;
+  const wantMovies = !g || g === 'Películas';
   const wantEspeciales = !g || g === GENRE_ESPECIALES;
-  const wantSeasons = g === GENRE_TEMPORADAS;
 
-  // Featured row (only on full home, not filtered genres)
-  if (!g) {
-    const guideId = cfg.defaultGuide || 'lista-b';
-    const featuredIds = [guideId, 'hombres-negro', 'kid', 'solo-canon', 'movies-all'];
-    for (const fid of featuredIds) {
-      const hit = listsAsMetas(index, { ids: [fid] })[0];
-      if (hit) {
-        hit.releaseInfo = `Destacado · ${hit.releaseInfo || ''}`.trim();
-        push(hit);
-      }
-    }
-    push(ovasEspecialesMeta(index, false));
-  }
-
-  if (wantSerie) push(seriesMeta(index, false));
-  if (wantGuias) for (const m of listsAsMetas(index, { group: 'guias' })) push(m);
-  if (wantPers) for (const m of listsAsMetas(index, { group: 'personajes' })) push(m);
-  if (wantExtras) for (const m of listsAsMetas(index, { group: 'extras' })) push(m);
-  if (wantArcos) for (const m of listsAsMetas(index, { group: 'arcos' })) push(m);
-  if (wantEspeciales) push(ovasEspecialesMeta(index, false));
-  if (wantSeasons && !cfg.hideSeasons) {
-    for (const n of listSeasonNumbers(index)) push(seasonMeta(n, index, { full: false }));
-  } else if (wantSeasons) {
-    for (const n of listSeasonNumbers(index)) push(seasonMeta(n, index, { full: false }));
-  }
+  if (wantGuias) out.push(...guideMetas(index));
+  if (wantMovies) out.push(moviesPlaylistMeta(index));
+  if (wantEspeciales) out.push(ovasEspecialesMeta(index, false));
 
   if (skip > 0) return out.slice(skip);
   return out;
 }
 
-/** Narrow Search: specific list / character / season hits. */
+/** Search only within A–D, películas and especiales. */
 function searchBiblioteca(index, q) {
   const nq = normalizeQ(q);
   const out = [];
@@ -292,56 +247,24 @@ function searchBiblioteca(index, q) {
     out.push(meta);
   };
 
-  const main = seriesMeta(index, false);
-  if (metaMatchesSearch(main, q)) {
-    push(main);
+  for (const meta of guideMetas(index, { q })) push(meta);
+
+  const movies = moviesPlaylistMeta(index);
+  if (metaMatchesSearch(movies, q) || /pelicula|movie|film/.test(nq)) {
+    push(movies);
   }
 
-  const listHits = listsAsMetas(index, { q: q || undefined });
-  // Prefer exact / short-name hits first (Lista B before Lista A when query is "lista b")
-  listHits.sort((a, b) => {
-    const an = normalizeQ(a.name);
-    const bn = normalizeQ(b.name);
-    const aExact = an.includes(nq) ? 0 : 1;
-    const bExact = bn.includes(nq) ? 0 : 1;
-    if (aExact !== bExact) return aExact - bExact;
-    return 0;
-  });
-  for (const meta of listHits) push(meta);
-
   const ovas = ovasEspecialesMeta(index, false);
-  if (
-    !q ||
-    metaMatchesSearch(ovas, q) ||
-    /ova|especial|magic file|magicfiles/.test(nq)
-  ) {
+  if (metaMatchesSearch(ovas, q) || /ova|especial|magic file/.test(nq)) {
     push(ovas);
   }
 
-  if (!q) return out;
-
-  const seasonHit = nq.match(/(?:temp(?:orada)?|t|season)\s*0*(\d{1,2})\b/);
-  if (seasonHit) {
-    push(seasonMeta(Number(seasonHit[1]), index, { full: false }));
-  } else if (/temporada|season/.test(nq)) {
-    for (const n of listSeasonNumbers(index).slice(0, 10)) {
-      push(seasonMeta(n, index, { full: false }));
-    }
-  } else {
-    const epNum = nq.match(/\b(\d{1,4})\b/);
-    if (epNum) {
-      const abs = Number(epNum[1]);
-      if (abs >= 1 && abs <= 1500) {
-        for (const n of listSeasonNumbers(index)) {
-          const sm = seasonMeta(n, index, { full: false });
-          if ((sm.description || '').includes(`${abs}`)) {
-            push(sm);
-            break;
-          }
-        }
-      }
-    }
-  }
+  // Prefer exact name hits first
+  out.sort((a, b) => {
+    const an = normalizeQ(a.name);
+    const bn = normalizeQ(b.name);
+    return (an.includes(nq) ? 0 : 1) - (bn.includes(nq) ? 0 : 1);
+  });
 
   return out;
 }
@@ -371,18 +294,18 @@ function ovasEspecialesMeta(index, full = false) {
   return {
     id: 'bk:ovas',
     type: 'series',
-    name: 'OVAs y especiales',
+    name: 'Especiales / OVAs',
     poster: art.poster,
     background: art.background,
     logo: brand.logo,
     posterShape: 'poster',
     description: [
-      'OVAs, Magic Files, episodios especiales y extras de BiblioKudo.',
+      'OVAs, Magic Files y episodios especiales de BiblioKudo.',
       `${specials.length} títulos disponibles.`,
       '',
-      'También aparecen intercalados en las Listas A–D cuando la guía los incluye.',
+      'También van intercalados dentro de las Listas A–D según la guía.',
     ].join('\n'),
-    releaseInfo: `OVAs · ${specials.length} títulos`,
+    releaseInfo: `${specials.length} especiales`,
     genres: ['Anime', 'Misterio', GENRE_ESPECIALES],
     runtime: '25–90 min',
     videos,
@@ -436,7 +359,7 @@ function seriesMeta(index, full = false) {
       'Para ver filtrado: usa el filtro de género (Guías, Personajes, Arcos, Extras…).',
     ].join('\n'),
     releaseInfo: `Serie · ${index.stats.episodeCount} eps`,
-    genres: ['Anime', 'Misterio', GENRE_SERIE],
+    genres: ['Anime', 'Misterio', 'Serie'],
     runtime: '25 min',
     imdbRating: '8.6',
     trailer: SERIES_TRAILER,

@@ -194,6 +194,116 @@ export function groupLabel(group) {
   return 'Lista';
 }
 
+/** Genre chip labels used by the single Biblioteca catalog. */
+export const GENRE_GUIAS = 'Guías';
+export const GENRE_PERSONAJES = 'Personajes';
+export const GENRE_EXTRAS = 'Extras';
+export const GENRE_TEMPORADAS = 'Temporadas';
+export const GENRE_SERIE = 'Serie';
+
+export const BIBLIOTECA_GENRES = [
+  GENRE_SERIE,
+  GENRE_GUIAS,
+  GENRE_PERSONAJES,
+  GENRE_EXTRAS,
+  GENRE_TEMPORADAS,
+];
+
+/** Preferred order inside Personajes (rest follow alphabetically by short). */
+const PERSONAJE_ORDER = [
+  'hombres-negro',
+  'shinran',
+  'haibara',
+  'kid',
+  'amuro',
+  'heiji',
+  'conan',
+  'ran',
+  'ninos',
+  'fbi',
+  'kogoro',
+  'kogoro-eri',
+  'sonoko',
+  'policias',
+  'matrimonio-kudo',
+  'nagano',
+];
+
+const GROUP_ORDER = { guias: 0, personajes: 1, extras: 2 };
+
+/** Movie posters rotated for season cards so they don't all look identical. */
+const SEASON_POSTERS = [
+  ART['lista-a'],
+  ART['lista-b'],
+  ART['lista-c'],
+  ART['lista-d'],
+  ART.kogoro,
+  ART['mejores-rellenos'],
+  ART.policias,
+  ART.sonoko,
+  ART['mejores-casos'],
+  ART.heiji,
+  ART.ninos,
+  ART['kogoro-eri'],
+  ART['hombres-negro'],
+  ART.haibara,
+  ART.ran,
+  ART['matrimonio-kudo'],
+  ART.shinran,
+  ART.kid,
+];
+
+export function listsOrdered() {
+  const lists = allLists();
+  return lists.sort((a, b) => {
+    const ga = GROUP_ORDER[a.group] ?? 9;
+    const gb = GROUP_ORDER[b.group] ?? 9;
+    if (ga !== gb) return ga - gb;
+    if (a.group === 'guias') {
+      return String(a.id).localeCompare(String(b.id));
+    }
+    if (a.group === 'personajes') {
+      const ia = PERSONAJE_ORDER.indexOf(a.id);
+      const ib = PERSONAJE_ORDER.indexOf(b.id);
+      return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
+    }
+    if (a.group === 'extras') {
+      const eo = ['mejores-rellenos', 'mejores-casos'];
+      return (eo.indexOf(a.id) + 1 || 9) - (eo.indexOf(b.id) + 1 || 9);
+    }
+    return String(a.short || a.name).localeCompare(String(b.short || b.name));
+  });
+}
+
+function genreForGroup(group) {
+  if (group === 'guias') return GENRE_GUIAS;
+  if (group === 'personajes') return GENRE_PERSONAJES;
+  if (group === 'extras') return GENRE_EXTRAS;
+  return 'Conan';
+}
+
+function blurbForList(list) {
+  if (list.group === 'guias') {
+    const tips = {
+      'lista-a': 'Para ver casi todo sin el relleno peor.',
+      'lista-b': 'La opción por defecto: la más equilibrada.',
+      'lista-c': 'Si quieres la trama principal en menos tiempo.',
+      'lista-d': 'Solo repaso / spoilers — no empieces por aquí.',
+    };
+    return tips[list.id] || 'Orden de visionado de la guía PDF.';
+  }
+  if (list.group === 'personajes') {
+    return 'Arcos y caps focalizados en este personaje, en orden de la guía.';
+  }
+  if (list.id === 'mejores-rellenos') {
+    return 'Fillers que sí merecen la pena, sin el resto.';
+  }
+  if (list.id === 'mejores-casos') {
+    return 'Casos top por mérito propio (canon y relleno).';
+  }
+  return 'Selección curada de la guía de visionado.';
+}
+
 let cached = null;
 
 export function loadWatchLists() {
@@ -410,7 +520,8 @@ export function buildListVideos(list, index) {
 }
 
 export function listMeta(list, index, { full = false } = {}) {
-  const cacheKey = `list:${list.id}:${full ? 'full' : 'card'}:${index.scrapedAt || ''}`;
+  // v2 in key so renamed cards don't stick in process cache after upgrades
+  const cacheKey = `list:v2:${list.id}:${full ? 'full' : 'card'}:${index.scrapedAt || ''}`;
   const hit = metaCache.get(cacheKey);
   if (hit) return hit;
 
@@ -424,10 +535,22 @@ export function listMeta(list, index, { full = false } = {}) {
   ).length;
 
   const badge = groupLabel(list.group);
+  const subtitle = list.name.replace(/^Lista [A-D]\s*[—–-]\s*/i, '').trim();
   const displayName =
     list.group === 'guias'
-      ? `${list.short} · ${list.name.replace(/^Lista [A-D]\s*[—–-]\s*/i, '')}`
+      ? `${list.short} · ${subtitle}`
       : `${badge} · ${list.short}`;
+
+  const genreChip = genreForGroup(list.group);
+  const parts = [
+    list.description?.trim() || list.name,
+    blurbForList(list),
+    '',
+    `En orden de la guía · ${list.itemCount} entradas`,
+    `· ${eps} caps · ${movies} películas · ${ovas} OVAs · ${specials} especiales`,
+    '',
+    'Añádela a tu biblioteca para seguir el progreso.',
+  ];
 
   const meta = {
     id: `bk:list:${list.id}`,
@@ -437,19 +560,9 @@ export function listMeta(list, index, { full = false } = {}) {
     background: art.background,
     logo: art.logo || ART.default.logo,
     posterShape: 'poster',
-    description: [
-      list.description,
-      '',
-      `${list.itemCount} entradas en orden · ${eps} caps · ${movies} películas · ${ovas} OVAs · ${specials} especiales.`,
-      'Añádela a tu biblioteca para seguir el progreso.',
-    ].join('\n'),
-    releaseInfo: `${list.itemCount} entradas`,
-    genres:
-      list.group === 'guias'
-        ? ['Anime', 'Misterio', 'Guía de visionado']
-        : list.group === 'personajes'
-          ? ['Anime', 'Misterio', 'Personajes']
-          : ['Anime', 'Misterio', 'Selección'],
+    description: parts.filter((p) => p !== undefined).join('\n'),
+    releaseInfo: `${badge} · ${list.itemCount} entradas`,
+    genres: ['Anime', 'Misterio', genreChip],
     runtime: '25 min',
     videos,
   };
@@ -458,7 +571,7 @@ export function listMeta(list, index, { full = false } = {}) {
 }
 
 export function seasonMeta(seasonNumber, index, { full = false } = {}) {
-  const cacheKey = `season:${seasonNumber}:${full ? 'full' : 'card'}:${index.scrapedAt || ''}`;
+  const cacheKey = `season:v2:${seasonNumber}:${full ? 'full' : 'card'}:${index.scrapedAt || ''}`;
   const hit = metaCache.get(cacheKey);
   if (hit) return hit;
 
@@ -468,7 +581,9 @@ export function seasonMeta(seasonNumber, index, { full = false } = {}) {
   const episodes = (index.episodes || []).filter(
     (e) => absToSeason.get(e.episode) === seasonNumber
   );
-  const art = ART.seasons;
+  const art =
+    SEASON_POSTERS[(Math.max(1, seasonNumber) - 1) % SEASON_POSTERS.length] ||
+    ART.seasons;
   const videos = full
     ? episodes.map((ep, i) => ({
         id: `${CONAN_IMDB}:1:${ep.episode}`,
@@ -482,18 +597,25 @@ export function seasonMeta(seasonNumber, index, { full = false } = {}) {
 
   const first = episodes[0]?.episode ?? start ?? '?';
   const last = episodes[episodes.length - 1]?.episode ?? '?';
+  const n = String(seasonNumber).padStart(2, '0');
 
   const meta = {
     id: `bk:season:${seasonNumber}`,
     type: 'series',
-    name: `Temporada ${String(seasonNumber).padStart(2, '0')} · Caps ${first}–${last}`,
+    name: `Temporada ${n} · Caps ${first}–${last}`,
     poster: art.poster,
     background: art.background,
     logo: ART.default.logo,
     posterShape: 'poster',
-    description: `Detective Conan — Temporada ${seasonNumber} (DVD / Case Closed).\nCapítulos absolutos ${first}–${last} · ${episodes.length} episodios.\nAñádela a tu biblioteca para maratonar por temporada.`,
-    releaseInfo: `T${seasonNumber} · ${episodes.length} eps`,
-    genres: ['Anime', 'Misterio', 'Temporada'],
+    description: [
+      `Detective Conan — Temporada ${seasonNumber} (DVD / Case Closed).`,
+      `Capítulos absolutos ${first}–${last} · ${episodes.length} episodios.`,
+      '',
+      'Numeración de temporada al estilo Case Closed; los streams usan el número absoluto de BiblioKudo.',
+      'Añádela a tu biblioteca para maratonar por temporada.',
+    ].join('\n'),
+    releaseInfo: `Temporada · ${episodes.length} eps`,
+    genres: ['Anime', 'Misterio', GENRE_TEMPORADAS],
     runtime: '25 min',
     videos,
   };

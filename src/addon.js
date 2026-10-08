@@ -21,6 +21,14 @@ import {
   toStremioSubtitles,
   subtitlesForRequest,
 } from './subtitles/index.js';
+import {
+  allLists,
+  getList,
+  listMeta,
+  seasonMeta,
+  listSeasonNumbers,
+  findMovieInIndex,
+} from './watch-lists.js';
 
 const { addonBuilder } = addonSdk;
 
@@ -37,10 +45,10 @@ const MAX_RESOLVE = 3;
 
 export const manifest = {
   id: 'community.bibliokudo.detectiveconan',
-  version: '1.3.1',
+  version: '1.4.0',
   name: 'Detective Conan (BiblioKudo ES)',
   description:
-    'Streams BiblioKudo + subtítulos ES (fan) para Detective Conan. Los softsubs aplican a streams de este addon y de otros (Torrentio, etc.) vía recurso subtitles.',
+    'Detective Conan en ES (BiblioKudo): temporadas, guías de visionado (Listas A–D + personajes), películas/OVAs en orden, streams y subtítulos fan.',
   logo: LOGO,
   background: BACKGROUND,
   resources: [
@@ -59,8 +67,6 @@ export const manifest = {
       types: ['series', 'movie'],
       idPrefixes: ['tt', 'tmdb:', 'tvdb:', 'bk:', 'kitsu:', 'mal:', 'anilist:'],
     },
-    // NO idPrefixes here — required so Nuvio/Stremio also ask us when another
-    // addon is playing (videoId, OpenSubtitles hash, torrent filename).
     {
       name: 'subtitles',
       types: ['series', 'movie'],
@@ -71,22 +77,54 @@ export const manifest = {
     {
       type: 'series',
       id: 'bk-conan-series',
-      name: 'Detective Conan (ES)',
+      name: 'Detective Conan (todo)',
+      extra: [{ name: 'search', isRequired: false }],
+    },
+    {
+      type: 'series',
+      id: 'bk-conan-seasons',
+      name: 'Por temporadas',
+      extra: [{ name: 'search', isRequired: false }],
+    },
+    {
+      type: 'series',
+      id: 'bk-conan-guias',
+      name: 'Guías de visionado',
+      extra: [{ name: 'search', isRequired: false }],
+    },
+    {
+      type: 'series',
+      id: 'bk-conan-personajes',
+      name: 'Por personaje',
+      extra: [{ name: 'search', isRequired: false }],
+    },
+    {
+      type: 'series',
+      id: 'bk-conan-extras',
+      name: 'Mejores rellenos / casos',
       extra: [{ name: 'search', isRequired: false }],
     },
     {
       type: 'movie',
       id: 'bk-conan-movies',
-      name: 'Detective Conan Películas',
+      name: 'Películas',
       extra: [{ name: 'search', isRequired: false }],
     },
   ],
-  // Do NOT set global idPrefixes — it would block hash-based subtitle requests
   behaviorHints: {
     adultContent: false,
     configurable: false,
   },
 };
+
+function filterBySearch(metas, q) {
+  if (!q) return metas;
+  return metas.filter(
+    (m) =>
+      (m.name || '').toLowerCase().includes(q) ||
+      (m.description || '').toLowerCase().includes(q)
+  );
+}
 
 function seriesMeta(index, full = false) {
   const videos = [];
@@ -252,15 +290,35 @@ export function createAddon() {
 
     if (type === 'series' && id === 'bk-conan-series') {
       const meta = seriesMeta(index, false);
-      if (
-        q &&
-        !meta.name.toLowerCase().includes(q) &&
-        !'detective conan'.includes(q) &&
-        !q.includes('conan')
-      ) {
-        return { metas: [] };
-      }
-      return { metas: [meta] };
+      return { metas: filterBySearch([meta], q) };
+    }
+
+    if (type === 'series' && id === 'bk-conan-seasons') {
+      const metas = listSeasonNumbers(index).map((n) =>
+        seasonMeta(n, index, { full: false })
+      );
+      return { metas: filterBySearch(metas, q) };
+    }
+
+    if (type === 'series' && id === 'bk-conan-guias') {
+      const metas = allLists()
+        .filter((l) => l.group === 'guias')
+        .map((l) => listMeta(l, index, { full: false }));
+      return { metas: filterBySearch(metas, q) };
+    }
+
+    if (type === 'series' && id === 'bk-conan-personajes') {
+      const metas = allLists()
+        .filter((l) => l.group === 'personajes')
+        .map((l) => listMeta(l, index, { full: false }));
+      return { metas: filterBySearch(metas, q) };
+    }
+
+    if (type === 'series' && id === 'bk-conan-extras') {
+      const metas = allLists()
+        .filter((l) => l.group === 'extras')
+        .map((l) => listMeta(l, index, { full: false }));
+      return { metas: filterBySearch(metas, q) };
     }
 
     if (type === 'movie' && id === 'bk-conan-movies') {
@@ -282,6 +340,19 @@ export function createAddon() {
     await ensureIndex();
     const index = await getIndex();
 
+    if (type === 'series' && id.startsWith('bk:list:')) {
+      const listId = id.slice('bk:list:'.length);
+      const list = getList(listId);
+      if (!list) return { meta: null };
+      return { meta: listMeta(list, index, { full: true }) };
+    }
+
+    if (type === 'series' && id.startsWith('bk:season:')) {
+      const n = Number(id.split(':')[2]);
+      if (!Number.isFinite(n)) return { meta: null };
+      return { meta: seasonMeta(n, index, { full: true }) };
+    }
+
     if (
       type === 'series' &&
       (id === SERIES_ID ||
@@ -293,7 +364,13 @@ export function createAddon() {
     }
 
     if (type === 'movie' && id.startsWith('bk:movie:')) {
-      const num = Number(id.split(':')[2]);
+      const key = id.slice('bk:movie:'.length);
+      if (key === 'lupin') {
+        const m = findMovieInIndex(index, { movieKey: 'lupin' });
+        if (!m) return { meta: null };
+        return { meta: movieMeta(m) };
+      }
+      const num = Number(key);
       const m = index.movies.find((x) => x.movieNumber === num);
       if (!m) return { meta: null };
       return { meta: movieMeta(m) };
@@ -358,8 +435,11 @@ export function createAddon() {
     }
 
     if (type === 'movie' && id.startsWith('bk:movie:')) {
-      const num = Number(id.split(':')[2]);
-      const m = index.movies.find((x) => x.movieNumber === num);
+      const key = id.slice('bk:movie:'.length);
+      const m =
+        key === 'lupin'
+          ? findMovieInIndex(index, { movieKey: 'lupin' })
+          : index.movies.find((x) => x.movieNumber === Number(key));
       if (!m) return { streams: [] };
       return { streams: await linksToStreams(m.links) };
     }

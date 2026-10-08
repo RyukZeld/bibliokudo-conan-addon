@@ -163,4 +163,4 @@ export function resolveConanEpisode(id) {
   return { type: 'episode', absolute };
 }
 
-export { CONAN_IMDB, loadSeasonMap };
+export { loadSeasonMap };

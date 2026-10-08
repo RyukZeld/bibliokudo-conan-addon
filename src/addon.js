@@ -16,6 +16,11 @@ import {
   isConanSeriesId,
   parseStremioId,
 } from './episode-id.js';
+import {
+  findSpanishSubtitles,
+  toStremioSubtitles,
+  subtitlesForVideoId,
+} from './subtitles/index.js';
 
 const { addonBuilder } = addonSdk;
 
@@ -32,13 +37,22 @@ const MAX_RESOLVE = 3;
 
 export const manifest = {
   id: 'community.bibliokudo.detectiveconan',
-  version: '1.2.0',
+  version: '1.3.0',
   name: 'Detective Conan (BiblioKudo ES)',
   description:
-    'Streams en español de Detective Conan (BiblioKudo). Compatible con temporadas de Stremio/Nuvio (S18 E2 → cap. absoluto) y numeración absoluta Cinemeta.',
+    'Streams + subtítulos fan en español de Detective Conan (BiblioKudo, OpenSubtitles, x-cord). Compatible con temporadas Stremio/Nuvio (S18 E2 → cap. absoluto).',
   logo: LOGO,
   background: BACKGROUND,
-  resources: ['catalog', 'meta', 'stream'],
+  resources: [
+    'catalog',
+    'meta',
+    'stream',
+    {
+      name: 'subtitles',
+      types: ['series', 'movie'],
+      idPrefixes: ['tt', 'tmdb:', 'tvdb:', 'bk:', 'kitsu:', 'mal:', 'anilist:'],
+    },
+  ],
   types: ['series', 'movie'],
   catalogs: [
     {
@@ -124,7 +138,7 @@ function movieMeta(m) {
   };
 }
 
-async function linksToStreams(links) {
+async function linksToStreams(links, { subtitles } = {}) {
   const sorted = [...(links || [])].sort(
     (a, b) => streamSortKey(a) - streamSortKey(b)
   );
@@ -133,7 +147,6 @@ async function linksToStreams(links) {
   const deduped = [];
   for (const link of sorted) {
     const role = effectiveRole(link);
-    const key = `${role}:${link.host}:${isStreamtapeUrl(link.url) ? 'st' : 'x'}`;
     // Allow up to 2 streamtape mirrors, 1 of everything else per role
     const stCount = deduped.filter(
       (l) => isStreamtapeUrl(l.url) && effectiveRole(l) === 'stream'
@@ -150,6 +163,8 @@ async function linksToStreams(links) {
 
   const streams = [];
   let resolved = 0;
+  const subTracks =
+    subtitles && subtitles.length ? toStremioSubtitles(subtitles) : undefined;
 
   for (const link of deduped) {
     const name = streamName(link);
@@ -169,6 +184,7 @@ async function linksToStreams(links) {
             title: name,
             description,
             url: media,
+            subtitles: subTracks,
             behaviorHints: {
               notWebReady: true,
               bingeGroup: 'bk-streamtape',
@@ -193,9 +209,25 @@ async function linksToStreams(links) {
       title: name,
       description: description || 'Abrir en navegador',
       externalUrl: link.url,
+      subtitles: subTracks,
     });
   }
   return streams;
+}
+
+async function subsForResolved(resolved, id) {
+  if (!resolved || resolved.type !== 'episode') return [];
+  const parsed = parseStremioId(id);
+  try {
+    return await findSpanishSubtitles({
+      absolute: resolved.absolute,
+      season: parsed?.season,
+      episode: parsed?.episode,
+    });
+  } catch (err) {
+    console.warn('[subs] lookup failed:', err.message);
+    return [];
+  }
 }
 
 export function createAddon() {
@@ -279,10 +311,19 @@ export function createAddon() {
           );
           return { streams: [] };
         }
+        const subs = await subsForResolved(resolved, id);
         console.log(
-          `[stream] ${id} → abs #${resolved.absolute} (${ep.title})`
+          `[stream] ${id} → abs #${resolved.absolute} (${ep.title}) subs=${subs.length}`
         );
-        return { streams: await linksToStreams(ep.links) };
+        const streams = await linksToStreams(ep.links, { subtitles: subs });
+        // BiblioKudo encodes Spanish hardsubs; softsubs cover JP audio / early eps
+        if (!subs.length) {
+          for (const s of streams) {
+            const extra = 'Vídeo ES (hardsub BK). Softsubs fan no disponibles para este cap.';
+            s.description = s.description ? `${s.description}\n${extra}` : extra;
+          }
+        }
+        return { streams };
       }
 
       // Legacy bk:conan:N / bk:conan:s0:N if resolver missed
@@ -295,7 +336,12 @@ export function createAddon() {
         }
         const ep = index.episodes.find((e) => e.episode === parsed.episode);
         if (!ep) return { streams: [] };
-        return { streams: await linksToStreams(ep.links) };
+        const subs = await findSpanishSubtitles({
+          absolute: parsed.episode,
+          season: 1,
+          episode: parsed.episode,
+        }).catch(() => []);
+        return { streams: await linksToStreams(ep.links, { subtitles: subs }) };
       }
     }
 
@@ -307,6 +353,21 @@ export function createAddon() {
     }
 
     return { streams: [] };
+  });
+
+  builder.defineSubtitlesHandler(async ({ type, id }) => {
+    if (type !== 'series' && type !== 'movie') {
+      return { subtitles: [] };
+    }
+    try {
+      const records = await subtitlesForVideoId(id);
+      const subtitles = toStremioSubtitles(records);
+      console.log(`[subs] ${id} → ${subtitles.length} Spanish track(s)`);
+      return { subtitles, cacheMaxAge: 6 * 3600 };
+    } catch (err) {
+      console.warn('[subs] handler error:', err.message);
+      return { subtitles: [] };
+    }
   });
 
   return builder.getInterface();

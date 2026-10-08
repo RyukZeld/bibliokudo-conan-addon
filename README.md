@@ -6,11 +6,15 @@ Repo: https://github.com/RyukZeld/bibliokudo-conan-addon
 
 ## Instalar (URL del manifest)
 
+Pega esto en Stremio (Addons → Addon Repository URL) o en Nuvio:
+
 ```
-https://TU-HOST/manifest.json
+https://wesley-spreading-threshold-forestry.trycloudflare.com/manifest.json
 ```
 
-En Stremio → Addons → “Addon Repository URL”, o en Nuvio → Addons.
+Health: https://wesley-spreading-threshold-forestry.trycloudflare.com/health
+
+> Esa URL es un túnel Cloudflare hacia este Mac (Fly.io pide tarjeta para apps nuevas). Mientras el Mac esté encendido y el addon corriendo, funciona. Para hosting 24/7: conecta el repo a [Render](https://dashboard.render.com) (Blueprint `render.yaml`) o añade tarjeta en Fly y `fly deploy`.
 
 ## Catálogos
 

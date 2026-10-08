@@ -295,7 +295,7 @@ function seriesMeta(index, full = false) {
     background: BACKGROUND,
     logo: LOGO,
     posterShape: 'poster',
-    description: `Serie completa en español (BiblioKudo).\n${index.stats.episodeCount} episodios · ${index.stats.movieCount} películas · ${index.stats.specialCount} especiales/OVAs.\nActualizado: ${when}\n\nPara guías ordenadas (A–D, personajes) abre el catálogo Biblioteca Conan.`,
+    description: `Serie completa en español (BiblioKudo).\n${index.stats.episodeCount} episodios · ${index.stats.movieCount} películas · ${index.stats.specialCount} especiales/OVAs.\nActualizado: ${when}\n\nListas A–D y arcos por personaje viven en el catálogo Biblioteca Conan.`,
     releaseInfo: `1996–${new Date().getFullYear()} · Completa`,
     genres: ['Anime', 'Misterio', 'Comedia'],
     runtime: '25 min',

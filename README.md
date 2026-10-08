@@ -1,60 +1,49 @@
 # Detective Conan (BiblioKudo) — Addon Stremio / Nuvio
 
-Addon que scrapea [BiblioKudo](https://bibliokudo.wixsite.com/bibliokudo/dc-001-050) y expone episodios, películas, OVAs y especiales de **Detective Conan en español** dentro de Stremio o Nuvio.
+Addon que scrapea [BiblioKudo](https://bibliokudo.wixsite.com/bibliokudo/dc-001-050) y expone episodios, películas, OVAs y especiales de **Detective Conan en español** en Stremio o Nuvio.
 
-Los enlaces se actualizan solos (caché completa cada 12 h; páginas recientes cada 1 h).
+Repo: https://github.com/RyukZeld/bibliokudo-conan-addon
+
+## Instalar (URL del manifest)
+
+```
+https://TU-HOST/manifest.json
+```
+
+En Stremio → Addons → “Addon Repository URL”, o en Nuvio → Addons.
 
 ## Catálogos
 
 | Catálogo | Contenido |
 |----------|-----------|
 | **Detective Conan (ES)** | Anime (temp. 1, caps. 1…12xx) + OVAs/especiales (temp. 0) |
-| **Detective Conan Películas** | Cada película como título `movie` |
+| **Detective Conan Películas** | Cada película como `movie` |
 
-## Streams
+## Streams (botones BiblioKudo)
 
-En BiblioKudo los botones **BK** vienen en dos colores:
-- **Amarillo** (`#FFB703`) → streaming (prioridad en el addon; suele ser Streamtape)
-- **Azul/cian** (`#24E5FF`) → descarga (Fireload / Terabox / etc.)
-
-El addon etiqueta y prioriza el amarillo. Streamtape se resuelve a un `.mp4` reproducible; el resto se abre en el navegador. MaxiSubs: contraseña `maxisubs`.
+- **Amarillo** (`#FFB703`) → streaming → prioridad (`BK streaming · Streamtape ▶`)
+- **Azul** (`#24E5FF`) → descarga (`BK descarga · Fireload`)
+- Streamtape se resuelve a `.mp4` reproducible; el resto se abre en el navegador
+- MaxiSubs: contraseña `maxisubs`
 
 ## Desarrollo local
 
 ```bash
 npm install
-npm run dump -- --write   # scrapea todo y guarda data/index.json
-npm start                 # http://127.0.0.1:7050/manifest.json
+npm start   # http://127.0.0.1:7050/manifest.json
+npm run dump -- --write   # rescrapea y guarda data/index.json
 ```
 
-Solo estadísticas (sin snapshot completo):
+Health: `http://127.0.0.1:7050/health`
 
-```bash
-npm run dump
-```
+## Despliegue
 
-## Instalar en Stremio
+- **Fly.io**: `fly.toml` + `Dockerfile` listos (`fly deploy`)
+- **Render**: Blueprint en `render.yaml` (conecta el repo de GitHub)
 
-1. Arranca el addon (local o en Render).
-2. En Stremio → Addons → “Addon Repository URL”.
-3. Pega: `http://127.0.0.1:7050/manifest.json` (local) o `https://TU-APP.onrender.com/manifest.json`.
-
-## Instalar en Nuvio
-
-1. Despliega el addon con URL pública (Render free).
-2. En Nuvio → Addons → añade la URL del `manifest.json`.
-
-## Despliegue en Render (gratis)
-
-1. Sube este repo a GitHub.
-2. En [Render](https://render.com) → **New** → **Blueprint** (usa `render.yaml`) o **Web Service**:
-   - Build: `npm install`
-   - Start: `npm start`
-3. Copia la URL → `https://<servicio>.onrender.com/manifest.json`.
-
-> El plan free se duerme tras ~15 min sin tráfico: la primera petición puede tardar 30–50 s. El snapshot `data/index.json` (si lo commiteas tras `npm run dump -- --write`) sirve contenido inmediato mientras se refresca.
+La caché completa se refresca cada 12 h; las páginas recientes cada 1 h. El snapshot `data/index.json` permite responder al instante en arranques en frío.
 
 ## Notas
 
 - Fuente no oficial (fansubs). Uso personal / educativo.
-- Si Streamtape cambia su ofuscación, el resolver en `src/resolvers/streamtape.js` es el único punto a tocar (siempre hay fallback a enlace externo).
+- Si Streamtape cambia su ofuscación, toca `src/resolvers/streamtape.js` (siempre hay fallback a enlace externo).

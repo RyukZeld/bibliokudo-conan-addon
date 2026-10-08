@@ -7,7 +7,7 @@ function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-export async function fetchHtml(url, { timeoutMs = 45000, retries = 3 } = {}) {
+export async function fetchHtml(url, { timeoutMs = 45000, retries = 5 } = {}) {
   let lastErr;
   for (let attempt = 0; attempt <= retries; attempt++) {
     const ctrl = new AbortController();
@@ -29,14 +29,17 @@ export async function fetchHtml(url, { timeoutMs = 45000, retries = 3 } = {}) {
         res.status === 503 ||
         /Checking Your Request|cf-mitigated|just a moment/i.test(text)
       ) {
-        throw new Error(`HTTP ${res.status} (rate-limited) for ${url}`);
+        throw new Error(`HTTP ${res.status || 429} (rate-limited) for ${url}`);
       }
       if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
       return text;
     } catch (err) {
       lastErr = err;
       if (attempt < retries) {
-        const wait = 1500 * (attempt + 1) + Math.floor(Math.random() * 500);
+        const rateLimited = /rate-limited|429|503/i.test(String(err.message || err));
+        const wait =
+          (rateLimited ? 4000 : 1200) * (attempt + 1) +
+          Math.floor(Math.random() * 800);
         await sleep(wait);
       }
     } finally {

@@ -111,9 +111,12 @@ export async function discoverPages() {
   } catch (err) {
     console.warn('[pages] peliculas hub failed:', err.message);
   }
-  // Always include 1..28 (covers known films); extend if hub found higher
-  const maxMovie = Math.max(28, ...movieNums, 0);
+  // Site currently lists pelicula-1..24; only probe what the hub exposes (+ known max)
+  const maxFromHub = movieNums.size ? Math.max(...movieNums) : 24;
+  const maxMovie = Math.max(24, maxFromHub);
   for (let i = 1; i <= maxMovie; i++) {
+    // Skip numbers the hub never linked (avoids 404 → rate-limit cascades)
+    if (movieNums.size && !movieNums.has(i) && i > maxFromHub) continue;
     moviePages.push({
       slug: `pelicula-${i}`,
       kind: 'movie',

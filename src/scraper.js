@@ -3,34 +3,26 @@ import { fetchHtml } from './fetch.js';
 import { classifyHost, shouldSkipUrl } from './hosts.js';
 import { discoverPages } from './pages.js';
 
-/** Anime (3–4 digits) or OVA/Magic File (1–2 digits). */
+/** Anime (3–4 digits) or OVA/Magic File (1–2 digits). Titles may include [Original]. */
 const EP_TITLE_RE =
-  /^(\d{1,4})(?:\s*[-–]\s*(\d{1,4}))?\.\s+(.+?)(?:\s*\[Original\])?\s*$/i;
+  /^(\d{1,4})(?:\s*[-–]\s*(\d{1,4}))?\.\s+(.+?)\s*$/i;
 const MOVIE_TITLE_RE = /^pel[ií]cula\s+(\d+)\b(.*)$/i;
-/** Named specials without episode numbers (especiales page). */
 const NAMED_SPECIAL_RE =
   /^(OVA\s+Especial\b|Especial\s+(?!gratitud)|Promo\b|Pel[ií]cula\s+Lupin\b|Magic File\b).+/i;
 const SKIP_BUTTON =
-  /pack completo|use tab|fansubs|agradecimientos|enlace beikastreet|online bk/i;
+  /pack completo|use tab|fansubs|agradecimientos/i;
 const SKIP_URL_EXTRA = /docs\.google\.com\/spreadsheets|nyaa\.si\/?$/i;
 
-/** BiblioKudo: yellow = streaming, cyan/blue = download. */
 const STREAM_BG = /#ffb703/i;
 const DOWNLOAD_BG = /#24e5ff/i;
 
-/**
- * Map Wix style-* class → 'stream' | 'download' from CSS background colors.
- */
 export function extractButtonRoles(html) {
   const roles = new Map();
-  const re =
-    /\.(style-[a-z0-9]+)__root[^{]*\{([^}]*)\}/gi;
+  const re = /\.(style-[a-z0-9]+)__root[^{]*\{([^}]*)\}/gi;
   let m;
   while ((m = re.exec(html))) {
-    const sid = m[1];
-    const body = m[2];
-    if (STREAM_BG.test(body)) roles.set(sid, 'stream');
-    else if (DOWNLOAD_BG.test(body)) roles.set(sid, 'download');
+    if (STREAM_BG.test(m[2])) roles.set(m[1], 'stream');
+    else if (DOWNLOAD_BG.test(m[2])) roles.set(m[1], 'download');
   }
   return roles;
 }
@@ -38,21 +30,46 @@ export function extractButtonRoles(html) {
 function roleFromClass(className, roles) {
   if (!className || !roles?.size) return null;
   const m = String(className).match(/style-[a-z0-9]+/i);
-  if (!m) return null;
-  return roles.get(m[0]) || null;
+  return m ? roles.get(m[0]) || null : null;
+}
+
+/** Strip Wix guard / zero-width chars that break ^episode matching. */
+function cleanText(text) {
+  return String(text || '')
+    .replace(/[\u200B-\u200D\uFEFF\u00AD]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function normalizeTitle(title) {
+  return cleanText(title)
+    .replace(/\s*\[Original\]\s*/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function expandEpisodeTo(from, rawTo) {
+  if (rawTo == null || rawTo === '') return from;
+  const raw = String(rawTo);
+  if (raw.length < String(from).length) {
+    return Number(String(from).slice(0, -raw.length) + raw);
+  }
+  return Number(raw);
 }
 
 /**
- * Walk DOM in document order: titles then following external links.
+ * Parse a BiblioKudo page.
+ * Uses full <p> text (joins split <span>s) so titles like "1124." + "Title" match,
+ * and still picks up Wix buttons outside paragraphs (old episode pages).
  */
 export function parsePage(html, pageMeta = {}) {
   const buttonRoles = extractButtonRoles(html);
   const $ = cheerio.load(html);
-  // Remove scripts/styles noise (after we've read button colors)
   $('script, style, noscript').remove();
 
   const items = [];
   let current = null;
+  const handledPs = new Set();
 
   const pushCurrent = () => {
     if (
@@ -65,17 +82,25 @@ export function parsePage(html, pageMeta = {}) {
     current = null;
   };
 
+  const allowShort =
+    pageMeta.kind === 'ova' ||
+    pageMeta.kind === 'especial' ||
+    pageMeta.kind === 'other';
+
   const startEpisode = (from, to, title) => {
     pushCurrent();
     current = {
       type: pageMeta.kind === 'movie' ? 'movie' : pageMeta.kind || 'anime',
       episodeFrom: from,
       episodeTo: to ?? from,
-      title: title.trim(),
+      title: normalizeTitle(title),
       movieNumber: pageMeta.movieNumber ?? null,
       page: pageMeta.slug || null,
       links: [],
     };
+    if (allowShort && pageMeta.kind && pageMeta.kind !== 'anime') {
+      current.type = pageMeta.kind === 'other' ? 'especial' : pageMeta.kind;
+    }
   };
 
   const startMovie = (num, title) => {
@@ -84,7 +109,7 @@ export function parsePage(html, pageMeta = {}) {
       type: 'movie',
       episodeFrom: null,
       episodeTo: null,
-      title: (title || `Película ${num}`).trim(),
+      title: normalizeTitle(title || `Película ${num}`),
       movieNumber: num,
       page: pageMeta.slug || null,
       links: [],
@@ -94,7 +119,6 @@ export function parsePage(html, pageMeta = {}) {
   const addLink = (url, button, role = null) => {
     if (!url || shouldSkipUrl(url) || SKIP_URL_EXTRA.test(url)) return;
     if (!current) {
-      // Orphan links on a dedicated movie page
       if (pageMeta.kind === 'movie' && pageMeta.movieNumber) {
         startMovie(pageMeta.movieNumber, `Película ${pageMeta.movieNumber}`);
       } else {
@@ -103,113 +127,190 @@ export function parsePage(html, pageMeta = {}) {
     }
     const { label, playable } = classifyHost(url);
     const btn = (button || '').replace(/\s+/g, ' ').trim();
-    if (/pack completo|use tab|fansubs|agradecimientos/i.test(btn)) return;
-    // Dedup by URL
+    if (SKIP_BUTTON.test(btn)) return;
     if (current.links.some((l) => l.url === url)) return;
-    // Infer role from host if CSS color missing
     let inferred = role;
     if (!inferred) {
       if (/streamtape|stapadblock|pluto\.tv|primevideo/i.test(url)) inferred = 'stream';
-      else if (/fireload|mediafire|terabox|mega\.nz|nyaa\.si/i.test(url)) inferred = 'download';
+      else if (/fireload|mediafire|terabox|mega\.nz|nyaa\.si/i.test(url))
+        inferred = 'download';
     }
     current.links.push({
       url,
       button: btn || label,
       host: label,
       playable,
-      role: inferred, // 'stream' | 'download' | null
+      role: inferred,
     });
   };
 
-  // Collect all text nodes and anchors with a tree walk on body
-  const root = $('body').length ? $('body')[0] : $.root()[0];
+  /**
+   * Find every "NNN. Title" in text (not only at start).
+   * Needed when Wix puts the next episode after a <br> inside the same <p>.
+   */
+  const findEpisodeTitles = (raw) => {
+    const text = cleanText(raw);
+    if (!text) return [];
+    const hits = [];
+    const re = /(\d{1,4})(?:\s*[-–]\s*(\d{1,4}))?\.\s+/g;
+    let m;
+    while ((m = re.exec(text))) {
+      if (!allowShort && String(m[1]).length < 3) continue;
+      if (m.index > 0 && !/\s/.test(text[m.index - 1])) continue;
+      hits.push({
+        from: Number(m[1]),
+        rawTo: m[2],
+        index: m.index,
+        markerLen: m[0].length,
+      });
+    }
+    const out = [];
+    for (let i = 0; i < hits.length; i++) {
+      const start = hits[i].index + hits[i].markerLen;
+      const end = i + 1 < hits.length ? hits[i + 1].index : text.length;
+      let title = text.slice(start, end).trim();
+      title = title
+        .replace(
+          /\s*(Online BK|Enlace APTX|Enlace BeikaStreet|PACK COMPLETO|BK|Pluto\.tv|Prime|WZ|MxS\s*\[R\])\s*$/i,
+          ''
+        )
+        .trim();
+      if (title.length < 2) continue;
+      out.push({
+        from: hits[i].from,
+        to: expandEpisodeTo(hits[i].from, hits[i].rawTo),
+        title,
+      });
+    }
+    return out;
+  };
+
+  const handleText = (raw) => {
+    const text = cleanText(raw);
+    if (!text) return false;
+
+    const titles = findEpisodeTitles(text);
+    if (titles.length) {
+      for (const t of titles) startEpisode(t.from, t.to, t.title);
+      return true;
+    }
+
+    const mv = text.match(MOVIE_TITLE_RE);
+    if (mv) {
+      startMovie(Number(mv[1]), `Película ${mv[1]}${mv[2] || ''}`);
+      return true;
+    }
+    if (
+      (pageMeta.kind === 'especial' || pageMeta.kind === 'ova') &&
+      NAMED_SPECIAL_RE.test(text) &&
+      text.length < 120
+    ) {
+      pushCurrent();
+      current = {
+        type: pageMeta.kind,
+        episodeFrom: null,
+        episodeTo: null,
+        title: normalizeTitle(text),
+        movieNumber: null,
+        page: pageMeta.slug || null,
+        links: [],
+      };
+      return true;
+    }
+    return false;
+  };
+
+  const collectAnchor = (el) => {
+    const href = el.attribs?.href || $(el).attr('href');
+    if (!href || !/^https?:/i.test(href)) return;
+    const $a = $(el);
+    const label =
+      $a.find('.wixui-button__label').first().text() || $a.text() || '';
+    const role = roleFromClass(el.attribs?.class || $a.attr('class'), buttonRoles);
+    addLink(href, label.trim(), role);
+  };
+
+  /**
+   * Walk a <p> in document order: accumulate text across spans (so "1124."+"Title"
+   * joins), flush titles before each link/<br>, assign links to the current episode.
+   */
+  const walkParagraph = (pNode) => {
+    handledPs.add(pNode);
+    let pending = '';
+    const flush = () => {
+      if (!pending) return;
+      handleText(pending);
+      pending = '';
+    };
+    const walkP = (node) => {
+      if (!node) return;
+      if (node.type === 'text') {
+        pending += node.data || '';
+        return;
+      }
+      if (node.type !== 'tag') return;
+      const name = node.name?.toLowerCase();
+      if (name === 'a') {
+        flush();
+        collectAnchor(node);
+        return;
+      }
+      if (name === 'br') {
+        flush();
+        return;
+      }
+      for (const child of node.children || []) walkP(child);
+    };
+    for (const child of pNode.children || []) walkP(child);
+    flush();
+  };
 
   function walk(node) {
     if (!node) return;
-    if (node.type === 'text') {
-      const text = (node.data || '').replace(/\s+/g, ' ').trim();
-      if (!text) return;
-      const ep = text.match(EP_TITLE_RE);
-      if (ep) {
-        const from = Number(ep[1]);
-        // On anime pages ignore 1–2 digit titles (nav noise); on ova/especial allow them
-        const allowShort =
-          pageMeta.kind === 'ova' ||
-          pageMeta.kind === 'especial' ||
-          pageMeta.kind === 'other';
-        if (String(ep[1]).length < 3 && !allowShort) {
-          // fall through — might still be a movie title
-        } else {
-          let toNum = from;
-          if (ep[2]) {
-            const raw = ep[2];
-            if (raw.length < String(from).length) {
-              toNum = Number(String(from).slice(0, -raw.length) + raw);
-            } else {
-              toNum = Number(raw);
-            }
-          }
-          startEpisode(from, toNum, ep[3]);
-          // Mark OVAs/specials by page kind
-          if (allowShort && current) {
-            current.type = pageMeta.kind === 'other' ? 'especial' : pageMeta.kind;
-          }
-          return;
-        }
-      }
-      const mv = text.match(MOVIE_TITLE_RE);
-      if (mv) {
-        startMovie(Number(mv[1]), `Película ${mv[1]}${mv[2] || ''}`);
-        return;
-      }
-      if (
-        (pageMeta.kind === 'especial' || pageMeta.kind === 'ova') &&
-        NAMED_SPECIAL_RE.test(text) &&
-        text.length < 120
-      ) {
-        pushCurrent();
-        current = {
-          type: pageMeta.kind,
-          episodeFrom: null,
-          episodeTo: null,
-          title: text,
-          movieNumber: null,
-          page: pageMeta.slug || null,
-          links: [],
-        };
-      }
-      return;
-    }
 
     if (node.type === 'tag') {
       const name = node.name?.toLowerCase();
-      if (name === 'a') {
-        const href = node.attribs?.href;
-        if (href && /^https?:/i.test(href)) {
-          const $a = $(node);
-          const label =
-            $a.find('.wixui-button__label').first().text() ||
-            $a.text() ||
-            '';
-          const role = roleFromClass(node.attribs?.class, buttonRoles);
-          addLink(href, label.trim(), role);
-        }
+
+      if (name === 'p') {
+        walkParagraph(node);
+        return;
       }
-      const children = node.children || [];
-      for (const child of children) walk(child);
+
+      if (name === 'a') {
+        let anc = node.parent;
+        while (anc) {
+          if (handledPs.has(anc)) return;
+          anc = anc.parent;
+        }
+        collectAnchor(node);
+        return;
+      }
+
+      for (const child of node.children || []) walk(child);
+      return;
+    }
+
+    if (node.type === 'text') {
+      let anc = node.parent;
+      while (anc) {
+        if (anc.name === 'p' || handledPs.has(anc)) return;
+        anc = anc.parent;
+      }
+      handleText(node.data || '');
     }
   }
 
+  const root = $('body').length ? $('body')[0] : $.root()[0];
   walk(root);
   pushCurrent();
 
-  // If movie page with movieNumber but no items, keep empty shell for later links-only
+  // Dedicated movie page with only buttons / no title block
   if (pageMeta.kind === 'movie' && pageMeta.movieNumber && items.length === 0) {
-    // try collecting all external links as one movie
     const links = [];
     $('a[href]').each((_, el) => {
       const href = $(el).attr('href');
       if (!href || !/^https?:/i.test(href) || shouldSkipUrl(href)) return;
+      if (SKIP_URL_EXTRA.test(href)) return;
       const label =
         $(el).find('.wixui-button__label').first().text() || $(el).text() || '';
       if (SKIP_BUTTON.test(label)) return;
@@ -218,8 +319,10 @@ export function parsePage(html, pageMeta = {}) {
       const role = roleFromClass($(el).attr('class'), buttonRoles);
       let inferred = role;
       if (!inferred) {
-        if (/streamtape|stapadblock|pluto\.tv|primevideo/i.test(href)) inferred = 'stream';
-        else if (/fireload|mediafire|terabox|mega\.nz/i.test(href)) inferred = 'download';
+        if (/streamtape|stapadblock|pluto\.tv|primevideo/i.test(href))
+          inferred = 'stream';
+        else if (/fireload|mediafire|terabox|mega\.nz/i.test(href))
+          inferred = 'download';
       }
       links.push({
         url: href,
@@ -248,6 +351,10 @@ export function parsePage(html, pageMeta = {}) {
 async function scrapeOne(page) {
   try {
     const html = await fetchHtml(page.url);
+    // Soft 404 / empty challenge pages
+    if (html.length < 20000 && /Checking Your Request|Page Not Found/i.test(html)) {
+      return { page, items: [], error: 'unavailable' };
+    }
     const items = parsePage(html, page);
     return { page, items, error: null };
   } catch (err) {
@@ -255,9 +362,6 @@ async function scrapeOne(page) {
   }
 }
 
-/**
- * Full scrape of discovered pages. Returns normalized index.
- */
 export async function scrapeAll({ concurrency = 2, onProgress } = {}) {
   const pages = await discoverPages();
   onProgress?.({ phase: 'discovered', pages: pages.length });
@@ -272,17 +376,16 @@ export async function scrapeAll({ concurrency = 2, onProgress } = {}) {
       done: Math.min(i + concurrency, pages.length),
       total: pages.length,
     });
-    // Be gentle with Wix/Cloudflare
-    await new Promise((r) => setTimeout(r, 400));
+    await new Promise((r) => setTimeout(r, 500));
   }
 
   return buildIndex(results);
 }
 
 export function buildIndex(results) {
-  const episodes = new Map(); // key: absolute episode number
+  const episodes = new Map();
   const movies = new Map();
-  const specials = []; // OVAs / especiales (season 0)
+  const specials = [];
   const errors = [];
   const hostCounts = {};
   const pagesScraped = [];
@@ -310,7 +413,12 @@ export function buildIndex(results) {
           links: [],
           page: page.slug,
         };
-        prev.title = item.title || prev.title;
+        // Prefer richer title than "Película N"
+        if (item.title && !/^Película\s+\d+$/i.test(item.title)) {
+          prev.title = item.title;
+        } else if (!prev.title) {
+          prev.title = item.title;
+        }
         for (const l of item.links) {
           if (!prev.links.some((x) => x.url === l.url)) prev.links.push(l);
         }
@@ -318,7 +426,12 @@ export function buildIndex(results) {
         continue;
       }
 
-      if (page.kind === 'ova' || page.kind === 'especial' || item.type === 'ova' || item.type === 'especial') {
+      if (
+        page.kind === 'ova' ||
+        page.kind === 'especial' ||
+        item.type === 'ova' ||
+        item.type === 'especial'
+      ) {
         specials.push({
           id: `${page.slug}:${item.episodeFrom ?? item.title}`,
           title: item.title,
@@ -344,7 +457,6 @@ export function buildIndex(results) {
         continue;
       }
 
-      // anime episodes
       if (item.episodeFrom == null) continue;
       const from = item.episodeFrom;
       const to = item.episodeTo ?? from;
@@ -355,7 +467,6 @@ export function buildIndex(results) {
           links: [],
           pages: [],
         };
-        // Prefer title that mentions this specific number if shared
         if (from === to || !prev.title) prev.title = item.title;
         if (!prev.pages.includes(page.slug)) prev.pages.push(page.slug);
         for (const l of item.links) {
@@ -366,22 +477,24 @@ export function buildIndex(results) {
     }
   }
 
-  const episodeList = [...episodes.values()].sort((a, b) => a.episode - b.episode);
-  const movieList = [...movies.values()].sort((a, b) => a.movieNumber - b.movieNumber);
+  // Drop movies with zero links (placeholder pages 25–28 that 404)
+  const movieList = [...movies.values()]
+    .filter((m) => (m.links || []).length > 0)
+    .sort((a, b) => a.movieNumber - b.movieNumber);
 
-  // Assign specials season-0 episode numbers 1..N (skip empty)
+  const episodeList = [...episodes.values()].sort((a, b) => a.episode - b.episode);
+
   const specialList = specials
     .filter((s) => (s.links || []).length > 0)
-    .map((s, i) => ({
-      ...s,
-      specialIndex: i + 1,
-    }));
+    .map((s, i) => ({ ...s, specialIndex: i + 1 }));
 
   const maxEp = episodeList.length ? episodeList[episodeList.length - 1].episode : 0;
   const missing = [];
   for (let i = 1; i <= maxEp; i++) {
     if (!episodes.has(i)) missing.push(i);
   }
+
+  const noLinks = episodeList.filter((e) => !e.links?.length).map((e) => e.episode);
 
   return {
     scrapedAt: new Date().toISOString(),
@@ -394,6 +507,7 @@ export function buildIndex(results) {
       specialCount: specialList.length,
       maxEpisode: maxEp,
       missingEpisodes: missing,
+      episodesWithoutLinks: noLinks,
       hostCounts,
       pagesScraped,
       errors,
@@ -401,28 +515,27 @@ export function buildIndex(results) {
   };
 }
 
-/**
- * Rescrape only live pages and merge into existing index.
- */
 export async function scrapeLive(existingIndex) {
   const pages = (await discoverPages()).filter(
     (p) =>
       /1100-online|dc-1200|^pelicula-\d+$|peliculas/.test(p.slug) ||
-      p.kind === 'movie'
+      p.kind === 'movie' ||
+      p.kind === 'ova' ||
+      p.kind === 'especial' ||
+      p.kind === 'other'
   );
   const results = [];
   for (const page of pages) {
     results.push(await scrapeOne(page));
+    await new Promise((r) => setTimeout(r, 300));
   }
   const live = buildIndex(results);
 
-  // Merge: take live episodes/movies over existing when present
   const epMap = new Map(existingIndex.episodes.map((e) => [e.episode, e]));
   for (const e of live.episodes) epMap.set(e.episode, e);
   const movieMap = new Map(existingIndex.movies.map((m) => [m.movieNumber, m]));
   for (const m of live.movies) movieMap.set(m.movieNumber, m);
 
-  // Specials: keep existing, append new ids
   const specialIds = new Set(existingIndex.specials.map((s) => s.id));
   const specials = [...existingIndex.specials];
   for (const s of live.specials) {
@@ -431,12 +544,15 @@ export async function scrapeLive(existingIndex) {
       specials.push({ ...s, specialIndex: specials.length + 1 });
     } else {
       const idx = specials.findIndex((x) => x.id === s.id);
-      if (idx >= 0) specials[idx] = { ...s, specialIndex: specials[idx].specialIndex };
+      if (idx >= 0)
+        specials[idx] = { ...s, specialIndex: specials[idx].specialIndex };
     }
   }
 
   const episodes = [...epMap.values()].sort((a, b) => a.episode - b.episode);
-  const movies = [...movieMap.values()].sort((a, b) => a.movieNumber - b.movieNumber);
+  const movies = [...movieMap.values()]
+    .filter((m) => (m.links || []).length > 0)
+    .sort((a, b) => a.movieNumber - b.movieNumber);
   const maxEp = episodes.length ? episodes[episodes.length - 1].episode : 0;
   const missing = [];
   for (let i = 1; i <= maxEp; i++) if (!epMap.has(i)) missing.push(i);
@@ -445,7 +561,7 @@ export async function scrapeLive(existingIndex) {
     scrapedAt: new Date().toISOString(),
     episodes,
     movies,
-    specials,
+    specials: specials.map((s, i) => ({ ...s, specialIndex: i + 1 })),
     stats: {
       ...existingIndex.stats,
       episodeCount: episodes.length,

@@ -27,7 +27,7 @@ const MAX_RESOLVE = 3;
 
 export const manifest = {
   id: 'community.bibliokudo.detectiveconan',
-  version: '1.1.0',
+  version: '1.1.1',
   name: 'Detective Conan (BiblioKudo ES)',
   description:
     'Episodios, películas, OVAs y especiales de Detective Conan en español desde BiblioKudo (fansubs). Prioriza botones amarillos de streaming. Se actualiza sola.',

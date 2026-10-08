@@ -1,0 +1,21 @@
+{
+  "name": "bibliokudo-conan-addon",
+  "version": "1.1.0",
+  "description": "Stremio/Nuvio addon for Detective Conan in Spanish from BiblioKudo",
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dump": "node scripts/dump.js",
+    "snapshot": "node scripts/dump.js --write",
+    "enrich": "node scripts/enrich-roles.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "cheerio": "^1.0.0",
+    "stremio-addon-sdk": "^1.6.10",
+    "undici": "^6.21.0"
+  }
+}

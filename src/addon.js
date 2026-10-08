@@ -39,18 +39,16 @@ import {
 } from './watch-lists.js';
 import { findEpisode, findSpecial, findMovie } from './index-maps.js';
 import { createTtlCache } from './response-cache.js';
+import { SERIES_ART, movieArt, listArt } from './art.js';
 
 const { addonBuilder } = addonSdk;
 
 const streamCache = createTtlCache({ max: 300, name: 'streams' });
 const STREAM_TTL_MS = 5 * 60 * 1000;
 
-const POSTER =
-  'https://cdn.myanimelist.net/images/anime/7/73936.jpg';
-const BACKGROUND =
-  'https://cdn.myanimelist.net/images/anime/7/73936l.jpg';
-const LOGO =
-  'https://cdn.myanimelist.net/images/anime/7/73936t.jpg';
+const POSTER = SERIES_ART.poster;
+const BACKGROUND = SERIES_ART.background;
+const LOGO = SERIES_ART.logo;
 
 /** Catalog id (custom). Streams also answer Cinemeta/TMDB ids. */
 const SERIES_ID = 'bk:conan';
@@ -58,7 +56,7 @@ const MAX_RESOLVE = 3;
 
 export const manifest = {
   id: 'community.bibliokudo.detectiveconan',
-  version: '1.6.1',
+  version: '1.6.2',
   name: 'Detective Conan (BiblioKudo ES)',
   description:
     'Biblioteca Conan: serie, Listas A–D, personajes, extras, OVAs y temporadas. Filtra por género. Streams BiblioKudo + softsubs ES.',
@@ -173,12 +171,22 @@ function normalizeGenre(g) {
   return hit || '';
 }
 
+/** Nuvio/Search often queries with just "conan" — show the full board, not 3 hits. */
+function isBroadConanQuery(q) {
+  const nq = normalizeQ(q);
+  if (!nq) return true;
+  return /^(conan|detective|detective conan|meitantei|meitantei conan|case closed|biblioteca|biblioteca conan|serie|serie completa)$/.test(
+    nq
+  );
+}
+
 /**
  * Home board: Serie + todas las listas (+ OVAs).
  * Temporadas solo con el chip «Temporadas» (así no tapan las listas).
  */
 function buildBiblioteca(index, { genre, q, skip = 0 } = {}) {
-  if (q) return searchBiblioteca(index, q);
+  // Broad queries ("conan") must return the full library — Nuvio Search uses this path.
+  if (q && !isBroadConanQuery(q)) return searchBiblioteca(index, q);
 
   const g = normalizeGenre(genre);
   const out = [];
@@ -206,7 +214,7 @@ function buildBiblioteca(index, { genre, q, skip = 0 } = {}) {
   return out;
 }
 
-/** Full Search: serie + todas las listas + temporadas relevantes. */
+/** Narrow Search: specific list / character / season hits. */
 function searchBiblioteca(index, q) {
   const nq = normalizeQ(q);
   const out = [];
@@ -218,13 +226,7 @@ function searchBiblioteca(index, q) {
   };
 
   const main = seriesMeta(index, false);
-  // Only surface the full series for broad queries — not every "lista X" hit.
-  if (
-    !q ||
-    metaMatchesSearch(main, q) ||
-    /^(conan|detective|meitantei|case closed|biblioteca|serie completa|serie)$/.test(nq) ||
-    /^(conan|detective conan|meitantei conan|case closed)\b/.test(nq)
-  ) {
+  if (metaMatchesSearch(main, q)) {
     push(main);
   }
 
@@ -279,6 +281,7 @@ function searchBiblioteca(index, q) {
 
 function ovasEspecialesMeta(index, full = false) {
   const specials = index.specials || [];
+  const art = listArt('ovas');
   const videos = full
     ? specials.map((sp, i) => ({
         id: `${CONAN_IMDB}:0:${sp.specialIndex}`,
@@ -295,8 +298,8 @@ function ovasEspecialesMeta(index, full = false) {
     id: 'bk:ovas',
     type: 'series',
     name: 'OVAs y especiales',
-    poster: 'https://cdn.myanimelist.net/images/anime/3/20986.jpg',
-    background: 'https://cdn.myanimelist.net/images/anime/3/20986l.jpg',
+    poster: art.poster,
+    background: art.background,
     logo: LOGO,
     posterShape: 'poster',
     description: [
@@ -366,45 +369,15 @@ function seriesMeta(index, full = false) {
   };
 }
 
-/** Rough MAL covers for Conan movies 1–24 (reuse guide art cycle). */
-const MOVIE_COVERS = [
-  'https://cdn.myanimelist.net/images/anime/7/20981.jpg',
-  'https://cdn.myanimelist.net/images/anime/5/20982.jpg',
-  'https://cdn.myanimelist.net/images/anime/2/20983.jpg',
-  'https://cdn.myanimelist.net/images/anime/9/20984.jpg',
-  'https://cdn.myanimelist.net/images/anime/6/20985.jpg',
-  'https://cdn.myanimelist.net/images/anime/8/20987.jpg',
-  'https://cdn.myanimelist.net/images/anime/6/39715.jpg',
-  'https://cdn.myanimelist.net/images/anime/5/39716.jpg',
-  'https://cdn.myanimelist.net/images/anime/12/39718.jpg',
-  'https://cdn.myanimelist.net/images/anime/2/56618.jpg',
-  'https://cdn.myanimelist.net/images/anime/11/39717.jpg',
-  'https://cdn.myanimelist.net/images/anime/8/56619.jpg',
-  'https://cdn.myanimelist.net/images/anime/13/45587.jpg',
-  'https://cdn.myanimelist.net/images/anime/9/56621.jpg',
-  'https://cdn.myanimelist.net/images/anime/4/56620.jpg',
-  'https://cdn.myanimelist.net/images/anime/3/20986.jpg',
-  'https://cdn.myanimelist.net/images/anime/9/75479.jpg',
-  'https://cdn.myanimelist.net/images/anime/4/75478.jpg',
-  'https://cdn.myanimelist.net/images/anime/10/78317.jpg',
-  'https://cdn.myanimelist.net/images/anime/7/73936.jpg',
-  'https://cdn.myanimelist.net/images/anime/10/78317.jpg',
-  'https://cdn.myanimelist.net/images/anime/13/45587.jpg',
-  'https://cdn.myanimelist.net/images/anime/4/75478.jpg',
-  'https://cdn.myanimelist.net/images/anime/9/56621.jpg',
-];
-
 function movieMeta(m) {
   const n = m.movieNumber;
-  const poster =
-    (Number.isFinite(n) && MOVIE_COVERS[n - 1]) || POSTER;
-  const background = poster.replace(/\.jpg$/i, 'l.jpg');
+  const art = movieArt(n);
   return {
     id: `bk:movie:${n}`,
     type: 'movie',
     name: m.title || `Película ${n}`,
-    poster,
-    background,
+    poster: art.poster,
+    background: art.background,
     logo: LOGO,
     posterShape: 'poster',
     description: `Película ${n} de Detective Conan en español (BiblioKudo).${

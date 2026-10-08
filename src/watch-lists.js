@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { CONAN_IMDB, loadSeasonMap } from './episode-id.js';
 import { findEpisode, findSpecial, findMovie } from './index-maps.js';
 import { createTtlCache } from './response-cache.js';
+import { SERIES_ART, listArt, seasonArt } from './art.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const LISTS_PATH = path.join(__dirname, '..', 'data', 'watch-lists.json');
@@ -13,108 +14,6 @@ const META_TTL_MS = 10 * 60 * 1000;
 
 /** @type {Map<number, number> | null} */
 let absToSeasonCache = null;
-
-/** Distinct Conan movie / series posters (MAL) — reliable anime covers, not character thumbs. */
-export const ART = {
-  default: {
-    poster: 'https://cdn.myanimelist.net/images/anime/7/73936.jpg',
-    background: 'https://cdn.myanimelist.net/images/anime/7/73936l.jpg',
-    logo: 'https://cdn.myanimelist.net/images/anime/7/73936t.jpg',
-  },
-  // Guías A–D → películas icónicas
-  'lista-a': {
-    poster: 'https://cdn.myanimelist.net/images/anime/7/20981.jpg', // P1 Rascacielos
-    background: 'https://cdn.myanimelist.net/images/anime/7/20981l.jpg',
-  },
-  'lista-b': {
-    poster: 'https://cdn.myanimelist.net/images/anime/5/20982.jpg', // P2 14ª víctima
-    background: 'https://cdn.myanimelist.net/images/anime/5/20982l.jpg',
-  },
-  'lista-c': {
-    poster: 'https://cdn.myanimelist.net/images/anime/2/20983.jpg', // P3 mago
-    background: 'https://cdn.myanimelist.net/images/anime/2/20983l.jpg',
-  },
-  'lista-d': {
-    poster: 'https://cdn.myanimelist.net/images/anime/9/20984.jpg', // P4 ojos
-    background: 'https://cdn.myanimelist.net/images/anime/9/20984l.jpg',
-  },
-  'hombres-negro': {
-    poster: 'https://cdn.myanimelist.net/images/anime/13/45587.jpg', // P13 chase
-    background: 'https://cdn.myanimelist.net/images/anime/13/45587l.jpg',
-  },
-  shinran: {
-    poster: 'https://cdn.myanimelist.net/images/anime/10/78317.jpg', // P20
-    background: 'https://cdn.myanimelist.net/images/anime/10/78317l.jpg',
-  },
-  conan: {
-    poster: 'https://cdn.myanimelist.net/images/anime/7/73936.jpg',
-    background: 'https://cdn.myanimelist.net/images/anime/7/73936l.jpg',
-  },
-  ran: {
-    poster: 'https://cdn.myanimelist.net/images/anime/4/75478.jpg', // P18
-    background: 'https://cdn.myanimelist.net/images/anime/4/75478l.jpg',
-  },
-  ninos: {
-    poster: 'https://cdn.myanimelist.net/images/anime/11/39717.jpg', // P11
-    background: 'https://cdn.myanimelist.net/images/anime/11/39717l.jpg',
-  },
-  haibara: {
-    poster: 'https://cdn.myanimelist.net/images/anime/9/56621.jpg', // P14
-    background: 'https://cdn.myanimelist.net/images/anime/9/56621l.jpg',
-  },
-  kogoro: {
-    poster: 'https://cdn.myanimelist.net/images/anime/6/20985.jpg', // P5
-    background: 'https://cdn.myanimelist.net/images/anime/6/20985l.jpg',
-  },
-  'kogoro-eri': {
-    poster: 'https://cdn.myanimelist.net/images/anime/8/56619.jpg', // P12
-    background: 'https://cdn.myanimelist.net/images/anime/8/56619l.jpg',
-  },
-  kid: {
-    poster: 'https://cdn.myanimelist.net/images/anime/3/20986.jpg', // P3 vibe / Kid
-    background: 'https://cdn.myanimelist.net/images/anime/3/20986l.jpg',
-  },
-  heiji: {
-    poster: 'https://cdn.myanimelist.net/images/anime/2/56618.jpg', // P10
-    background: 'https://cdn.myanimelist.net/images/anime/2/56618l.jpg',
-  },
-  sonoko: {
-    poster: 'https://cdn.myanimelist.net/images/anime/5/39716.jpg', // P8
-    background: 'https://cdn.myanimelist.net/images/anime/5/39716l.jpg',
-  },
-  fbi: {
-    poster: 'https://cdn.myanimelist.net/images/anime/13/45587.jpg',
-    background: 'https://cdn.myanimelist.net/images/anime/13/45587l.jpg',
-  },
-  amuro: {
-    poster: 'https://cdn.myanimelist.net/images/anime/10/78317.jpg',
-    background: 'https://cdn.myanimelist.net/images/anime/10/78317l.jpg',
-  },
-  policias: {
-    poster: 'https://cdn.myanimelist.net/images/anime/6/39715.jpg', // P7
-    background: 'https://cdn.myanimelist.net/images/anime/6/39715l.jpg',
-  },
-  'matrimonio-kudo': {
-    poster: 'https://cdn.myanimelist.net/images/anime/9/75479.jpg', // Episodio ONE vibe
-    background: 'https://cdn.myanimelist.net/images/anime/9/75479l.jpg',
-  },
-  nagano: {
-    poster: 'https://cdn.myanimelist.net/images/anime/4/56620.jpg', // P13 alt
-    background: 'https://cdn.myanimelist.net/images/anime/4/56620l.jpg',
-  },
-  'mejores-rellenos': {
-    poster: 'https://cdn.myanimelist.net/images/anime/8/20987.jpg', // P6
-    background: 'https://cdn.myanimelist.net/images/anime/8/20987l.jpg',
-  },
-  'mejores-casos': {
-    poster: 'https://cdn.myanimelist.net/images/anime/12/39718.jpg', // P9
-    background: 'https://cdn.myanimelist.net/images/anime/12/39718l.jpg',
-  },
-  seasons: {
-    poster: 'https://cdn.myanimelist.net/images/anime/7/73936.jpg',
-    background: 'https://cdn.myanimelist.net/images/anime/7/73936l.jpg',
-  },
-};
 
 /** Extra search keywords so "hdn", "lista b", "kid" find the right card. */
 export const SEARCH_ALIASES = {
@@ -233,28 +132,6 @@ const PERSONAJE_ORDER = [
 
 const GROUP_ORDER = { guias: 0, personajes: 1, extras: 2 };
 
-/** Movie posters rotated for season cards so they don't all look identical. */
-const SEASON_POSTERS = [
-  ART['lista-a'],
-  ART['lista-b'],
-  ART['lista-c'],
-  ART['lista-d'],
-  ART.kogoro,
-  ART['mejores-rellenos'],
-  ART.policias,
-  ART.sonoko,
-  ART['mejores-casos'],
-  ART.heiji,
-  ART.ninos,
-  ART['kogoro-eri'],
-  ART['hombres-negro'],
-  ART.haibara,
-  ART.ran,
-  ART['matrimonio-kudo'],
-  ART.shinran,
-  ART.kid,
-];
-
 export function listsOrdered() {
   const lists = allLists();
   return lists.sort((a, b) => {
@@ -357,7 +234,7 @@ export function buildAbsoluteToSeason() {
 }
 
 function artFor(listId) {
-  return { ...ART.default, ...(ART[listId] || {}) };
+  return listArt(listId);
 }
 
 /** Official OVAs 1–12 live at specialIndex 54–65 in our scrape. */
@@ -534,7 +411,7 @@ export function buildListVideos(list, index) {
 
 export function listMeta(list, index, { full = false } = {}) {
   // v2 in key so renamed cards don't stick in process cache after upgrades
-  const cacheKey = `list:v2:${list.id}:${full ? 'full' : 'card'}:${index.scrapedAt || ''}`;
+  const cacheKey = `list:v3:${list.id}:${full ? 'full' : 'card'}:${index.scrapedAt || ''}`;
   const hit = metaCache.get(cacheKey);
   if (hit) return hit;
 
@@ -571,7 +448,7 @@ export function listMeta(list, index, { full = false } = {}) {
     name: displayName,
     poster: art.poster,
     background: art.background,
-    logo: art.logo || ART.default.logo,
+    logo: art.logo || SERIES_ART.logo,
     posterShape: 'poster',
     description: parts.filter((p) => p !== undefined).join('\n'),
     releaseInfo: `${badge} · ${list.itemCount} entradas`,
@@ -584,7 +461,7 @@ export function listMeta(list, index, { full = false } = {}) {
 }
 
 export function seasonMeta(seasonNumber, index, { full = false } = {}) {
-  const cacheKey = `season:v2:${seasonNumber}:${full ? 'full' : 'card'}:${index.scrapedAt || ''}`;
+  const cacheKey = `season:v3:${seasonNumber}:${full ? 'full' : 'card'}:${index.scrapedAt || ''}`;
   const hit = metaCache.get(cacheKey);
   if (hit) return hit;
 
@@ -594,9 +471,7 @@ export function seasonMeta(seasonNumber, index, { full = false } = {}) {
   const episodes = (index.episodes || []).filter(
     (e) => absToSeason.get(e.episode) === seasonNumber
   );
-  const art =
-    SEASON_POSTERS[(Math.max(1, seasonNumber) - 1) % SEASON_POSTERS.length] ||
-    ART.seasons;
+  const art = seasonArt(seasonNumber);
   const videos = full
     ? episodes.map((ep, i) => ({
         id: `${CONAN_IMDB}:1:${ep.episode}`,
@@ -618,7 +493,7 @@ export function seasonMeta(seasonNumber, index, { full = false } = {}) {
     name: `Temporada ${n} · Caps ${first}–${last}`,
     poster: art.poster,
     background: art.background,
-    logo: ART.default.logo,
+    logo: SERIES_ART.logo,
     posterShape: 'poster',
     description: [
       `Detective Conan — Temporada ${seasonNumber} (DVD / Case Closed).`,

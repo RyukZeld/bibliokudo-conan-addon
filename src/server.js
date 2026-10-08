@@ -36,13 +36,13 @@ const server = http.createServer(async (req, res) => {
   let url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
 
   // Stremio SDK expects extras in the PATH:
-  //   /subtitles/series/<id>/<urlencoded-qs>.json
-  // Some clients (Nuvio, curl, browsers) send ?query= instead — rewrite.
-  const mSub = url.pathname.match(
-    /^(\/(?:subtitles|stream|meta)\/[^/]+\/[^/]+)\.json$/i
+  //   /catalog|meta|stream|subtitles/.../<id>/<qs>.json
+  // Nuvio/browsers often send ?search= — rewrite to path extras.
+  const mRes = url.pathname.match(
+    /^(\/(?:catalog|subtitles|stream|meta)\/[^/]+\/[^/]+)\.json$/i
   );
-  if (mSub && url.search && url.search.length > 1) {
-    const rewritten = `${mSub[1]}/${url.searchParams.toString()}.json`;
+  if (mRes && url.search && url.search.length > 1) {
+    const rewritten = `${mRes[1]}/${url.searchParams.toString()}.json`;
     req.url = rewritten;
     url = new URL(rewritten, `http://${req.headers.host || 'localhost'}`);
   }

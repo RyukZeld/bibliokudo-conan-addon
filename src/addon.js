@@ -28,6 +28,7 @@ import {
   seasonMeta,
   listSeasonNumbers,
   findMovieInIndex,
+  listMatchesQuery,
 } from './watch-lists.js';
 import { findEpisode, findSpecial, findMovie } from './index-maps.js';
 import { createTtlCache } from './response-cache.js';
@@ -36,6 +37,22 @@ const { addonBuilder } = addonSdk;
 
 const streamCache = createTtlCache({ max: 300, name: 'streams' });
 const STREAM_TTL_MS = 5 * 60 * 1000;
+
+/** Order in Biblioteca / Discover home. */
+const BIBLIOTECA_LIST_IDS = [
+  'lista-a',
+  'lista-b',
+  'lista-c',
+  'lista-d',
+  'hombres-negro',
+  'shinran',
+  'haibara',
+  'kid',
+  'amuro',
+  'heiji',
+  'mejores-rellenos',
+  'mejores-casos',
+];
 
 const POSTER =
   'https://cdn.myanimelist.net/images/anime/7/73936.jpg';
@@ -50,10 +67,10 @@ const MAX_RESOLVE = 3;
 
 export const manifest = {
   id: 'community.bibliokudo.detectiveconan',
-  version: '1.4.1',
+  version: '1.5.1',
   name: 'Detective Conan (BiblioKudo ES)',
   description:
-    'Detective Conan en ES (BiblioKudo): temporadas, guías A–D, personajes, películas/OVAs en orden, streams y subtítulos fan. Caché y búsquedas optimizadas.',
+    'Biblioteca Conan ES: Listas A–D, personajes, temporadas y películas en orden. Streams BiblioKudo + softsubs ES. Busca «Lista B», «Haibara», «Kid»…',
   logo: LOGO,
   background: BACKGROUND,
   resources: [
@@ -81,18 +98,9 @@ export const manifest = {
   catalogs: [
     {
       type: 'series',
-      id: 'bk-conan-series',
-      name: 'Detective Conan (todo)',
+      id: 'bk-conan-biblioteca',
+      name: 'Biblioteca Conan',
       extra: [{ name: 'search', isRequired: false }],
-    },
-    {
-      type: 'series',
-      id: 'bk-conan-seasons',
-      name: 'Por temporadas',
-      extra: [
-        { name: 'search', isRequired: false },
-        { name: 'skip', isRequired: false },
-      ],
     },
     {
       type: 'series',
@@ -108,8 +116,23 @@ export const manifest = {
     },
     {
       type: 'series',
+      id: 'bk-conan-seasons',
+      name: 'Por temporadas',
+      extra: [
+        { name: 'search', isRequired: false },
+        { name: 'skip', isRequired: false },
+      ],
+    },
+    {
+      type: 'series',
       id: 'bk-conan-extras',
       name: 'Mejores rellenos / casos',
+      extra: [{ name: 'search', isRequired: false }],
+    },
+    {
+      type: 'series',
+      id: 'bk-conan-series',
+      name: 'Serie completa',
       extra: [{ name: 'search', isRequired: false }],
     },
     {
@@ -125,13 +148,111 @@ export const manifest = {
   },
 };
 
+function normalizeQ(q) {
+  return String(q || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '')
+    .trim();
+}
+
+function escapeRegExp(s) {
+  return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function metaMatchesSearch(meta, q) {
+  if (!q) return true;
+  const nq = normalizeQ(q);
+  const blob = normalizeQ(
+    `${meta.name || ''} ${meta.description || ''} ${meta.releaseInfo || ''} ${(meta.genres || []).join(' ')}`
+  );
+  if (blob.includes(nq)) return true;
+  const tokens = nq.split(/\s+/).filter(Boolean);
+  return tokens.every((t) => {
+    if (t.length <= 2) {
+      return new RegExp(`(?:^|\\s)${escapeRegExp(t)}(?:\\s|$)`).test(blob);
+    }
+    return blob.includes(t);
+  });
+}
+
 function filterBySearch(metas, q) {
   if (!q) return metas;
-  return metas.filter(
-    (m) =>
-      (m.name || '').toLowerCase().includes(q) ||
-      (m.description || '').toLowerCase().includes(q)
-  );
+  return metas.filter((m) => metaMatchesSearch(m, q));
+}
+
+function listsAsMetas(index, { group, ids, q } = {}) {
+  let lists = allLists();
+  if (group) lists = lists.filter((l) => l.group === group);
+  if (ids) {
+    const set = new Set(ids);
+    lists = lists.filter((l) => set.has(l.id));
+    lists.sort((a, b) => ids.indexOf(a.id) - ids.indexOf(b.id));
+  }
+  if (q) lists = lists.filter((l) => listMatchesQuery(l, q));
+  return lists.map((l) => listMeta(l, index, { full: false }));
+}
+
+/** Full Search: serie + todas las listas + temporadas relevantes. */
+function searchBiblioteca(index, q) {
+  const nq = normalizeQ(q);
+  const out = [];
+  const seen = new Set();
+  const push = (meta) => {
+    if (!meta?.id || seen.has(meta.id)) return;
+    seen.add(meta.id);
+    out.push(meta);
+  };
+
+  const main = seriesMeta(index, false);
+  // Only surface the full series for broad queries — not every "lista X" hit.
+  if (
+    !q ||
+    metaMatchesSearch(main, q) ||
+    /^(conan|detective|meitantei|case closed|biblioteca|serie completa|serie)$/.test(nq) ||
+    /^(conan|detective conan|meitantei conan|case closed)\b/.test(nq)
+  ) {
+    push(main);
+  }
+
+  const listHits = listsAsMetas(index, { q: q || undefined });
+  // Prefer exact / short-name hits first (Lista B before Lista A when query is "lista b")
+  listHits.sort((a, b) => {
+    const an = normalizeQ(a.name);
+    const bn = normalizeQ(b.name);
+    const aExact = an.includes(nq) ? 0 : 1;
+    const bExact = bn.includes(nq) ? 0 : 1;
+    if (aExact !== bExact) return aExact - bExact;
+    return 0;
+  });
+  for (const meta of listHits) push(meta);
+
+  if (!q) return out;
+
+  const seasonHit = nq.match(/(?:temp(?:orada)?|t|season)\s*0*(\d{1,2})\b/);
+  if (seasonHit) {
+    push(seasonMeta(Number(seasonHit[1]), index, { full: false }));
+  } else if (/temporada|season/.test(nq)) {
+    for (const n of listSeasonNumbers(index).slice(0, 10)) {
+      push(seasonMeta(n, index, { full: false }));
+    }
+  } else {
+    const epNum = nq.match(/\b(\d{1,4})\b/);
+    if (epNum) {
+      const abs = Number(epNum[1]);
+      if (abs >= 1 && abs <= 1500) {
+        for (const n of listSeasonNumbers(index)) {
+          const sm = seasonMeta(n, index, { full: false });
+          if ((sm.description || '').includes(`${abs}`)) {
+            push(sm);
+            break;
+          }
+        }
+      }
+    }
+  }
+
+  return out;
 }
 
 function seriesMeta(index, full = false) {
@@ -174,8 +295,8 @@ function seriesMeta(index, full = false) {
     background: BACKGROUND,
     logo: LOGO,
     posterShape: 'poster',
-    description: `Detective Conan en español (fansubs vía BiblioKudo).\n${index.stats.episodeCount} episodios · ${index.stats.movieCount} películas · ${index.stats.specialCount} especiales/OVAs.\nActualizado: ${when}`,
-    releaseInfo: `1996–${new Date().getFullYear()}`,
+    description: `Serie completa en español (BiblioKudo).\n${index.stats.episodeCount} episodios · ${index.stats.movieCount} películas · ${index.stats.specialCount} especiales/OVAs.\nActualizado: ${when}\n\nPara guías ordenadas (A–D, personajes) abre el catálogo Biblioteca Conan.`,
+    releaseInfo: `1996–${new Date().getFullYear()} · Completa`,
     genres: ['Anime', 'Misterio', 'Comedia'],
     runtime: '25 min',
     videos: full ? videos : undefined,
@@ -183,16 +304,20 @@ function seriesMeta(index, full = false) {
 }
 
 function movieMeta(m) {
+  const n = m.movieNumber;
   return {
-    id: `bk:movie:${m.movieNumber}`,
+    id: `bk:movie:${n}`,
     type: 'movie',
-    name: m.title || `Película ${m.movieNumber}`,
+    name: m.title || `Película ${n}`,
     poster: POSTER,
     background: BACKGROUND,
+    logo: LOGO,
     posterShape: 'poster',
-    description: `Detective Conan — Película ${m.movieNumber} (ES, BiblioKudo)${
-      m.links?.length ? `\n${m.links.length} fuentes` : ''
+    description: `Película ${n} de Detective Conan en español (BiblioKudo).${
+      m.links?.length ? `\n${m.links.length} fuentes disponibles.` : ''
     }`,
+    releaseInfo: `Película ${n}`,
+    genres: ['Anime', 'Misterio', 'Película'],
   };
 }
 
@@ -294,51 +419,72 @@ export function createAddon() {
   builder.defineCatalogHandler(async ({ type, id, extra }) => {
     await ensureIndex();
     const index = await getIndex();
-    const q = (extra?.search || '').toLowerCase().trim();
+    const q = (extra?.search || '').trim();
+
+    // Home board + global Search entry point
+    if (type === 'series' && id === 'bk-conan-biblioteca') {
+      if (q) {
+        return { metas: searchBiblioteca(index, q), cacheMaxAge: 600 };
+      }
+      const featured = [
+        seriesMeta(index, false),
+        ...listsAsMetas(index, { ids: BIBLIOTECA_LIST_IDS }),
+      ];
+      return { metas: featured, cacheMaxAge: 1800 };
+    }
 
     if (type === 'series' && id === 'bk-conan-series') {
-      const meta = seriesMeta(index, false);
-      return { metas: filterBySearch([meta], q), cacheMaxAge: 3600 };
+      if (q) {
+        // Also surface lists when searching from this board
+        return { metas: searchBiblioteca(index, q), cacheMaxAge: 600 };
+      }
+      return {
+        metas: [seriesMeta(index, false)],
+        cacheMaxAge: 3600,
+      };
     }
 
     if (type === 'series' && id === 'bk-conan-seasons') {
       let metas = listSeasonNumbers(index).map((n) =>
         seasonMeta(n, index, { full: false })
       );
-      metas = filterBySearch(metas, q);
+      if (q) {
+        metas = [
+          ...listsAsMetas(index, { q }),
+          ...metas.filter((m) => metaMatchesSearch(m, q)),
+        ];
+      }
       const skip = Math.max(0, Number(extra?.skip) || 0);
       if (skip) metas = metas.slice(skip);
       return { metas, cacheMaxAge: 3600 };
     }
 
     if (type === 'series' && id === 'bk-conan-guias') {
-      const metas = allLists()
-        .filter((l) => l.group === 'guias')
-        .map((l) => listMeta(l, index, { full: false }));
-      return { metas: filterBySearch(metas, q), cacheMaxAge: 3600 };
+      const metas = listsAsMetas(index, { group: 'guias', q: q || undefined });
+      return { metas, cacheMaxAge: 3600 };
     }
 
     if (type === 'series' && id === 'bk-conan-personajes') {
-      const metas = allLists()
-        .filter((l) => l.group === 'personajes')
-        .map((l) => listMeta(l, index, { full: false }));
-      return { metas: filterBySearch(metas, q), cacheMaxAge: 3600 };
+      const metas = listsAsMetas(index, {
+        group: 'personajes',
+        q: q || undefined,
+      });
+      return { metas, cacheMaxAge: 3600 };
     }
 
     if (type === 'series' && id === 'bk-conan-extras') {
-      const metas = allLists()
-        .filter((l) => l.group === 'extras')
-        .map((l) => listMeta(l, index, { full: false }));
-      return { metas: filterBySearch(metas, q), cacheMaxAge: 3600 };
+      const metas = listsAsMetas(index, { group: 'extras', q: q || undefined });
+      return { metas, cacheMaxAge: 3600 };
     }
 
     if (type === 'movie' && id === 'bk-conan-movies') {
       let movies = index.movies;
       if (q) {
+        const nq = normalizeQ(q);
         movies = movies.filter(
           (m) =>
-            (m.title || '').toLowerCase().includes(q) ||
-            String(m.movieNumber).includes(q)
+            normalizeQ(m.title || '').includes(nq) ||
+            String(m.movieNumber).includes(nq)
         );
       }
       return { metas: movies.map(movieMeta), cacheMaxAge: 3600 };

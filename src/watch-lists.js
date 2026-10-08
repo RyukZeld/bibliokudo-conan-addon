@@ -14,129 +14,185 @@ const META_TTL_MS = 10 * 60 * 1000;
 /** @type {Map<number, number> | null} */
 let absToSeasonCache = null;
 
-/** Distinct posters / backgrounds per catalog (MAL / official art). */
+/** Distinct Conan movie / series posters (MAL) — reliable anime covers, not character thumbs. */
 export const ART = {
   default: {
     poster: 'https://cdn.myanimelist.net/images/anime/7/73936.jpg',
     background: 'https://cdn.myanimelist.net/images/anime/7/73936l.jpg',
     logo: 'https://cdn.myanimelist.net/images/anime/7/73936t.jpg',
   },
+  // Guías A–D → películas icónicas
   'lista-a': {
-    poster: 'https://cdn.myanimelist.net/images/anime/7/73936.jpg',
-    background:
-      'https://cdn.myanimelist.net/images/anime/7/73936l.jpg',
+    poster: 'https://cdn.myanimelist.net/images/anime/7/20981.jpg', // P1 Rascacielos
+    background: 'https://cdn.myanimelist.net/images/anime/7/20981l.jpg',
   },
   'lista-b': {
-    poster: 'https://cdn.myanimelist.net/images/anime/2/73806.jpg',
-    background:
-      'https://cdn.myanimelist.net/images/anime/2/73806l.jpg',
+    poster: 'https://cdn.myanimelist.net/images/anime/5/20982.jpg', // P2 14ª víctima
+    background: 'https://cdn.myanimelist.net/images/anime/5/20982l.jpg',
   },
   'lista-c': {
-    poster: 'https://cdn.myanimelist.net/images/anime/11/73807.jpg',
-    background:
-      'https://cdn.myanimelist.net/images/anime/11/73807l.jpg',
+    poster: 'https://cdn.myanimelist.net/images/anime/2/20983.jpg', // P3 mago
+    background: 'https://cdn.myanimelist.net/images/anime/2/20983l.jpg',
   },
   'lista-d': {
-    poster: 'https://cdn.myanimelist.net/images/anime/13/73808.jpg',
-    background:
-      'https://cdn.myanimelist.net/images/anime/13/73808l.jpg',
+    poster: 'https://cdn.myanimelist.net/images/anime/9/20984.jpg', // P4 ojos
+    background: 'https://cdn.myanimelist.net/images/anime/9/20984l.jpg',
   },
   'hombres-negro': {
-    poster: 'https://cdn.myanimelist.net/images/anime/5/65187.jpg',
-    background:
-      'https://cdn.myanimelist.net/images/anime/5/65187l.jpg',
+    poster: 'https://cdn.myanimelist.net/images/anime/13/45587.jpg', // P13 chase
+    background: 'https://cdn.myanimelist.net/images/anime/13/45587l.jpg',
   },
   shinran: {
-    poster: 'https://cdn.myanimelist.net/images/anime/4/19632.jpg',
-    background:
-      'https://cdn.myanimelist.net/images/anime/4/19632l.jpg',
+    poster: 'https://cdn.myanimelist.net/images/anime/10/78317.jpg', // P20
+    background: 'https://cdn.myanimelist.net/images/anime/10/78317l.jpg',
   },
   conan: {
     poster: 'https://cdn.myanimelist.net/images/anime/7/73936.jpg',
-    background:
-      'https://cdn.myanimelist.net/images/anime/7/73936l.jpg',
+    background: 'https://cdn.myanimelist.net/images/anime/7/73936l.jpg',
   },
   ran: {
-    poster: 'https://cdn.myanimelist.net/images/anime/9/20471.jpg',
-    background:
-      'https://cdn.myanimelist.net/images/anime/9/20471l.jpg',
+    poster: 'https://cdn.myanimelist.net/images/anime/4/75478.jpg', // P18
+    background: 'https://cdn.myanimelist.net/images/anime/4/75478l.jpg',
   },
   ninos: {
-    poster: 'https://cdn.myanimelist.net/images/anime/3/73809.jpg',
-    background:
-      'https://cdn.myanimelist.net/images/anime/3/73809l.jpg',
+    poster: 'https://cdn.myanimelist.net/images/anime/11/39717.jpg', // P11
+    background: 'https://cdn.myanimelist.net/images/anime/11/39717l.jpg',
   },
   haibara: {
-    poster: 'https://cdn.myanimelist.net/images/characters/9/32270.jpg',
-    background:
-      'https://cdn.myanimelist.net/images/anime/7/73936l.jpg',
+    poster: 'https://cdn.myanimelist.net/images/anime/9/56621.jpg', // P14
+    background: 'https://cdn.myanimelist.net/images/anime/9/56621l.jpg',
   },
   kogoro: {
-    poster: 'https://cdn.myanimelist.net/images/characters/6/32271.jpg',
-    background:
-      'https://cdn.myanimelist.net/images/anime/7/73936l.jpg',
+    poster: 'https://cdn.myanimelist.net/images/anime/6/20985.jpg', // P5
+    background: 'https://cdn.myanimelist.net/images/anime/6/20985l.jpg',
   },
   'kogoro-eri': {
-    poster: 'https://cdn.myanimelist.net/images/characters/11/50567.jpg',
-    background:
-      'https://cdn.myanimelist.net/images/anime/7/73936l.jpg',
+    poster: 'https://cdn.myanimelist.net/images/anime/8/56619.jpg', // P12
+    background: 'https://cdn.myanimelist.net/images/anime/8/56619l.jpg',
   },
   kid: {
-    poster: 'https://cdn.myanimelist.net/images/anime/9/20471.jpg',
-    background:
-      'https://cdn.myanimelist.net/images/anime/9/20471l.jpg',
+    poster: 'https://cdn.myanimelist.net/images/anime/3/20986.jpg', // P3 vibe / Kid
+    background: 'https://cdn.myanimelist.net/images/anime/3/20986l.jpg',
   },
   heiji: {
-    poster: 'https://cdn.myanimelist.net/images/characters/4/32272.jpg',
-    background:
-      'https://cdn.myanimelist.net/images/anime/7/73936l.jpg',
+    poster: 'https://cdn.myanimelist.net/images/anime/2/56618.jpg', // P10
+    background: 'https://cdn.myanimelist.net/images/anime/2/56618l.jpg',
   },
   sonoko: {
-    poster: 'https://cdn.myanimelist.net/images/characters/14/32273.jpg',
-    background:
-      'https://cdn.myanimelist.net/images/anime/7/73936l.jpg',
+    poster: 'https://cdn.myanimelist.net/images/anime/5/39716.jpg', // P8
+    background: 'https://cdn.myanimelist.net/images/anime/5/39716l.jpg',
   },
   fbi: {
-    poster: 'https://cdn.myanimelist.net/images/anime/5/65187.jpg',
-    background:
-      'https://cdn.myanimelist.net/images/anime/5/65187l.jpg',
+    poster: 'https://cdn.myanimelist.net/images/anime/13/45587.jpg',
+    background: 'https://cdn.myanimelist.net/images/anime/13/45587l.jpg',
   },
   amuro: {
-    poster: 'https://cdn.myanimelist.net/images/characters/6/310307.jpg',
-    background:
-      'https://cdn.myanimelist.net/images/anime/5/65187l.jpg',
+    poster: 'https://cdn.myanimelist.net/images/anime/10/78317.jpg',
+    background: 'https://cdn.myanimelist.net/images/anime/10/78317l.jpg',
   },
   policias: {
-    poster: 'https://cdn.myanimelist.net/images/characters/8/32274.jpg',
-    background:
-      'https://cdn.myanimelist.net/images/anime/7/73936l.jpg',
+    poster: 'https://cdn.myanimelist.net/images/anime/6/39715.jpg', // P7
+    background: 'https://cdn.myanimelist.net/images/anime/6/39715l.jpg',
   },
   'matrimonio-kudo': {
-    poster: 'https://cdn.myanimelist.net/images/characters/9/50568.jpg',
-    background:
-      'https://cdn.myanimelist.net/images/anime/7/73936l.jpg',
+    poster: 'https://cdn.myanimelist.net/images/anime/9/75479.jpg', // Episodio ONE vibe
+    background: 'https://cdn.myanimelist.net/images/anime/9/75479l.jpg',
   },
   nagano: {
-    poster: 'https://cdn.myanimelist.net/images/anime/5/65187.jpg',
-    background:
-      'https://cdn.myanimelist.net/images/anime/5/65187l.jpg',
+    poster: 'https://cdn.myanimelist.net/images/anime/4/56620.jpg', // P13 alt
+    background: 'https://cdn.myanimelist.net/images/anime/4/56620l.jpg',
   },
   'mejores-rellenos': {
-    poster: 'https://cdn.myanimelist.net/images/anime/2/73806.jpg',
-    background:
-      'https://cdn.myanimelist.net/images/anime/2/73806l.jpg',
+    poster: 'https://cdn.myanimelist.net/images/anime/8/20987.jpg', // P6
+    background: 'https://cdn.myanimelist.net/images/anime/8/20987l.jpg',
   },
   'mejores-casos': {
-    poster: 'https://cdn.myanimelist.net/images/anime/11/73807.jpg',
-    background:
-      'https://cdn.myanimelist.net/images/anime/11/73807l.jpg',
+    poster: 'https://cdn.myanimelist.net/images/anime/12/39718.jpg', // P9
+    background: 'https://cdn.myanimelist.net/images/anime/12/39718l.jpg',
   },
   seasons: {
-    poster: 'https://cdn.myanimelist.net/images/anime/13/73808.jpg',
-    background:
-      'https://cdn.myanimelist.net/images/anime/13/73808l.jpg',
+    poster: 'https://cdn.myanimelist.net/images/anime/7/73936.jpg',
+    background: 'https://cdn.myanimelist.net/images/anime/7/73936l.jpg',
   },
 };
+
+/** Extra search keywords so "hdn", "lista b", "kid" find the right card. */
+export const SEARCH_ALIASES = {
+  'lista-a': ['lista a', 'casi completo', 'completa', 'guia a', 'orden a'],
+  'lista-b': ['lista b', 'recomendada', 'guia b', 'equilibrio', 'orden b'],
+  'lista-c': ['lista c', 'esencial', 'guia c', 'filtrada', 'corta'],
+  'lista-d': ['lista d', 'repaso', 'spoilers', 'esencial puro', 'guia d'],
+  'hombres-negro': [
+    'hdn',
+    'black organization',
+    'organizacion',
+    'hombres de negro',
+    'gin',
+    'vermouth',
+    'akai',
+  ],
+  shinran: ['shinichi', 'shin ran', 'romantico', 'pareja'],
+  conan: ['protagonista', 'edogawa'],
+  ran: ['mouri ran', 'ran mouri'],
+  ninos: ['detective boys', 'liga juvenil', 'ayumi', 'genta', 'mitsuhiko'],
+  haibara: ['shiho', 'miyano', 'sherry', 'ai haibara'],
+  kogoro: ['mouri', 'durmiendo'],
+  'kogoro-eri': ['eri', 'kisaki', 'esposa'],
+  kid: ['kaito', 'kaito kid', 'phantom thief', 'ladron'],
+  heiji: ['hattori', 'kazuha', 'osaka'],
+  sonoko: ['suzuki', 'makoto'],
+  fbi: ['akai', 'jodie', 'camel', 'james black'],
+  amuro: ['furuya', 'bourbon', 'zero', 'tooru'],
+  policias: ['megure', 'takagi', 'sato', 'policia'],
+  'matrimonio-kudo': ['yusaku', 'yukiko', 'padres', 'kudo'],
+  nagano: ['yamato', 'morofushi', 'koumei'],
+  'mejores-rellenos': ['filler', 'relleno', 'mejores fillers'],
+  'mejores-casos': ['mejores', 'top', 'casos top', 'favoritos'],
+};
+
+export function listSearchText(list) {
+  const aliases = SEARCH_ALIASES[list.id] || [];
+  return normalize(
+    [
+      list.id,
+      list.name,
+      list.short,
+      list.group,
+      list.description,
+      ...aliases,
+    ].join(' ')
+  );
+}
+
+export function listMatchesQuery(list, q) {
+  if (!q) return true;
+  const nq = normalize(q);
+  if (!nq) return true;
+  const blob = listSearchText(list);
+  // Full phrase (e.g. "lista b", "hombres de negro")
+  if (blob.includes(nq)) return true;
+  // All tokens must hit; short ones (a/b/c/d, kid) need word boundaries
+  // so "lista b" does not match every list that merely contains "lista".
+  const tokens = nq.split(/\s+/).filter(Boolean);
+  if (!tokens.length) return false;
+  return tokens.every((t) => {
+    if (t.length <= 2) {
+      return new RegExp(`(?:^|\\s)${escapeRegExp(t)}(?:\\s|$)`).test(blob);
+    }
+    return blob.includes(t);
+  });
+}
+
+function escapeRegExp(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+export function groupLabel(group) {
+  if (group === 'guias') return 'Guía';
+  if (group === 'personajes') return 'Personaje';
+  if (group === 'extras') return 'Selección';
+  return 'Lista';
+}
 
 let cached = null;
 
@@ -367,17 +423,34 @@ export function listMeta(list, index, { full = false } = {}) {
     (i) => i.kind === 'special'
   ).length;
 
+  const badge = groupLabel(list.group);
+  const displayName =
+    list.group === 'guias'
+      ? `${list.short} · ${list.name.replace(/^Lista [A-D]\s*[—–-]\s*/i, '')}`
+      : `${badge} · ${list.short}`;
+
   const meta = {
     id: `bk:list:${list.id}`,
     type: 'series',
-    name: list.name,
+    name: displayName,
     poster: art.poster,
     background: art.background,
     logo: art.logo || ART.default.logo,
     posterShape: 'poster',
-    description: `${list.description}\n\n${list.itemCount} entradas · ${eps} caps · ${movies} películas · ${ovas} OVAs · ${specials} especiales.\nOrden fiel a la guía PDF.`,
-    releaseInfo: 'Guía de visionado',
-    genres: ['Anime', 'Misterio', 'Guía'],
+    description: [
+      list.description,
+      '',
+      `${list.itemCount} entradas en orden · ${eps} caps · ${movies} películas · ${ovas} OVAs · ${specials} especiales.`,
+      'Añádela a tu biblioteca para seguir el progreso.',
+    ].join('\n'),
+    releaseInfo: `${list.itemCount} entradas`,
+    genres:
+      list.group === 'guias'
+        ? ['Anime', 'Misterio', 'Guía de visionado']
+        : list.group === 'personajes'
+          ? ['Anime', 'Misterio', 'Personajes']
+          : ['Anime', 'Misterio', 'Selección'],
+    runtime: '25 min',
     videos,
   };
   metaCache.set(cacheKey, meta, META_TTL_MS);
@@ -413,14 +486,15 @@ export function seasonMeta(seasonNumber, index, { full = false } = {}) {
   const meta = {
     id: `bk:season:${seasonNumber}`,
     type: 'series',
-    name: `Detective Conan — Temporada ${seasonNumber}`,
+    name: `Temporada ${String(seasonNumber).padStart(2, '0')} · Caps ${first}–${last}`,
     poster: art.poster,
     background: art.background,
     logo: ART.default.logo,
     posterShape: 'poster',
-    description: `Temporada ${seasonNumber} (numeración DVD / Case Closed).\nCapítulos absolutos ${first}–${last} · ${episodes.length} episodios.`,
-    releaseInfo: `T${seasonNumber}`,
-    genres: ['Anime', 'Misterio'],
+    description: `Detective Conan — Temporada ${seasonNumber} (DVD / Case Closed).\nCapítulos absolutos ${first}–${last} · ${episodes.length} episodios.\nAñádela a tu biblioteca para maratonar por temporada.`,
+    releaseInfo: `T${seasonNumber} · ${episodes.length} eps`,
+    genres: ['Anime', 'Misterio', 'Temporada'],
+    runtime: '25 min',
     videos,
   };
   metaCache.set(cacheKey, meta, META_TTL_MS);

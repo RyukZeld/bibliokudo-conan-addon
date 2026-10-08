@@ -1,7 +1,7 @@
 {
   "name": "bibliokudo-conan-addon",
-  "version": "1.4.1",
-  "description": "Stremio/Nuvio addon for Detective Conan in Spanish (BiblioKudo streams + fan softsubs)",
+  "version": "1.5.1",
+  "description": "Stremio/Nuvio addon for Detective Conan ES: Biblioteca (Listas A–D, personajes), BiblioKudo streams + softsubs",
   "type": "module",
   "main": "src/server.js",
   "scripts": {

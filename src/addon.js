@@ -10,10 +10,15 @@ import {
   isStreamtapeUrl,
   resolveStreamtape,
 } from './resolvers/streamtape.js';
+import {
+  resolveConanEpisode,
+  CONAN_IMDB,
+  isConanSeriesId,
+  parseStremioId,
+} from './episode-id.js';
 
 const { addonBuilder } = addonSdk;
 
-// Stable CDN-ish poster (avoid fragile wiki hotlink breakage when possible)
 const POSTER =
   'https://cdn.myanimelist.net/images/anime/7/73936.jpg';
 const BACKGROUND =
@@ -21,16 +26,16 @@ const BACKGROUND =
 const LOGO =
   'https://cdn.myanimelist.net/images/anime/7/73936t.jpg';
 
+/** Catalog id (custom). Streams also answer Cinemeta/TMDB ids. */
 const SERIES_ID = 'bk:conan';
-/** Max Streamtape URLs to resolve per request (rest stay as external). */
 const MAX_RESOLVE = 3;
 
 export const manifest = {
   id: 'community.bibliokudo.detectiveconan',
-  version: '1.1.1',
+  version: '1.2.0',
   name: 'Detective Conan (BiblioKudo ES)',
   description:
-    'Episodios, películas, OVAs y especiales de Detective Conan en español desde BiblioKudo (fansubs). Prioriza botones amarillos de streaming. Se actualiza sola.',
+    'Streams en español de Detective Conan (BiblioKudo). Compatible con temporadas de Stremio/Nuvio (S18 E2 → cap. absoluto) y numeración absoluta Cinemeta.',
   logo: LOGO,
   background: BACKGROUND,
   resources: ['catalog', 'meta', 'stream'],
@@ -49,7 +54,8 @@ export const manifest = {
       extra: [{ name: 'search', isRequired: false }],
     },
   ],
-  idPrefixes: ['bk:'],
+  // Answer stream requests for Cinemeta (tt), TMDB, TVDB and our bk: ids
+  idPrefixes: ['tt', 'tmdb:', 'tvdb:', 'bk:', 'kitsu:', 'mal:', 'anilist:'],
   behaviorHints: {
     adultContent: false,
     configurable: false,
@@ -61,11 +67,13 @@ function seriesMeta(index, full = false) {
   if (full) {
     for (const ep of index.episodes) {
       const num = String(ep.episode).padStart(3, '0');
+      // Cinemeta-compatible absolute ids (season 1 = absolute numbering)
       videos.push({
-        id: `${SERIES_ID}:${ep.episode}`,
+        id: `${CONAN_IMDB}:1:${ep.episode}`,
         title: `${num}. ${ep.title}`,
         season: 1,
         episode: ep.episode,
+        episodeNo: ep.episode,
         overview: ep.links?.length
           ? `${ep.links.length} fuentes · BiblioKudo`
           : 'Sin enlaces aún',
@@ -73,7 +81,7 @@ function seriesMeta(index, full = false) {
     }
     for (const sp of index.specials) {
       videos.push({
-        id: `${SERIES_ID}:s0:${sp.specialIndex}`,
+        id: `${CONAN_IMDB}:0:${sp.specialIndex}`,
         title: sp.title,
         season: 0,
         episode: sp.specialIndex,
@@ -85,7 +93,9 @@ function seriesMeta(index, full = false) {
     ? new Date(index.scrapedAt).toISOString().slice(0, 10)
     : '?';
   return {
-    id: SERIES_ID,
+    // Same IMDb id as Cinemeta so Nuvio/Stremio merge catalogs
+    id: CONAN_IMDB,
+    imdb_id: CONAN_IMDB,
     type: 'series',
     name: 'Detective Conan',
     poster: POSTER,
@@ -228,7 +238,13 @@ export function createAddon() {
     await ensureIndex();
     const index = await getIndex();
 
-    if (type === 'series' && (id === SERIES_ID || id === 'bk:conan')) {
+    if (
+      type === 'series' &&
+      (id === SERIES_ID ||
+        id === 'bk:conan' ||
+        id === CONAN_IMDB ||
+        isConanSeriesId(id))
+    ) {
       return { meta: seriesMeta(index, true) };
     }
 
@@ -246,18 +262,41 @@ export function createAddon() {
     await ensureIndex();
     const index = await getIndex();
 
-    if (type === 'series' && id.startsWith(`${SERIES_ID}:`)) {
-      const rest = id.slice(SERIES_ID.length + 1);
-      if (rest.startsWith('s0:')) {
-        const n = Number(rest.slice(3));
-        const sp = index.specials.find((s) => s.specialIndex === n);
-        if (!sp) return { streams: [] };
-        return { streams: await linksToStreams(sp.links) };
+    if (type === 'series') {
+      const resolved = resolveConanEpisode(id);
+      if (resolved) {
+        if (resolved.type === 'special') {
+          const sp = index.specials.find(
+            (s) => s.specialIndex === resolved.specialIndex
+          );
+          if (!sp) return { streams: [] };
+          return { streams: await linksToStreams(sp.links) };
+        }
+        const ep = index.episodes.find((e) => e.episode === resolved.absolute);
+        if (!ep) {
+          console.warn(
+            `[stream] no episode ${resolved.absolute} for id=${id}`
+          );
+          return { streams: [] };
+        }
+        console.log(
+          `[stream] ${id} → abs #${resolved.absolute} (${ep.title})`
+        );
+        return { streams: await linksToStreams(ep.links) };
       }
-      const epNum = Number(rest);
-      const ep = index.episodes.find((e) => e.episode === epNum);
-      if (!ep) return { streams: [] };
-      return { streams: await linksToStreams(ep.links) };
+
+      // Legacy bk:conan:N / bk:conan:s0:N if resolver missed
+      const parsed = parseStremioId(id);
+      if (parsed?.seriesId === 'bk:conan') {
+        if (parsed.season === 0) {
+          const sp = index.specials.find((s) => s.specialIndex === parsed.episode);
+          if (!sp) return { streams: [] };
+          return { streams: await linksToStreams(sp.links) };
+        }
+        const ep = index.episodes.find((e) => e.episode === parsed.episode);
+        if (!ep) return { streams: [] };
+        return { streams: await linksToStreams(ep.links) };
+      }
     }
 
     if (type === 'movie' && id.startsWith('bk:movie:')) {

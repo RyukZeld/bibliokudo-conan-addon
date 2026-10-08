@@ -62,7 +62,7 @@ export function findXcordSpanish(absolute) {
       id: `xcord:${pack.id}:${absolute}`,
       source: 'x-cord fansub',
       label: pack.label,
-      lang: pack.lang,
+      lang: 'es',
       langLabel: 'Español',
       fileName: file,
       format: pack.ext,

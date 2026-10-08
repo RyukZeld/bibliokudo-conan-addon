@@ -124,13 +124,15 @@ export async function downloadOsSubtitle(downloadUrl) {
 }
 
 /**
- * Find Spanish OpenSubtitles for an absolute Conan episode (+ optional S/E).
+ * Find Spanish OpenSubtitles for an absolute Conan episode (+ optional S/E / hash).
+ * Hash search helps when another addon (Torrentio, etc.) is playing the file.
  */
 export async function findOpenSubtitlesSpanish({
   absolute,
   season,
   episode,
-  limit = 6,
+  videoHash,
+  limit = 8,
 } = {}) {
   const results = [];
   const seen = new Set();
@@ -138,6 +140,9 @@ export async function findOpenSubtitlesSpanish({
   const push = (entry, label) => {
     const id = entry.IDSubtitleFile;
     if (!id || seen.has(id)) return;
+    // Keep Spanish (and Latin-American tags OS sometimes uses)
+    const lang = String(entry.ISO639 || entry.SubLanguageID || '').toLowerCase();
+    if (lang && !['es', 'spa', 'spl', 'sp'].includes(lang)) return;
     seen.add(id);
     const url = pickDownloadUrl(entry);
     if (!url) return;
@@ -145,9 +150,9 @@ export async function findOpenSubtitlesSpanish({
       id: `os:${id}`,
       source: 'OpenSubtitles',
       label,
-      lang: 'spa',
+      lang: 'es',
       langLabel: 'Español',
-      fileName: entry.SubFileName || `conan-${absolute}.srt`,
+      fileName: entry.SubFileName || `conan-${absolute || 'ep'}.srt`,
       format: extFor(entry),
       downloadUrl: url,
       rating: entry.SubRating,
@@ -155,7 +160,15 @@ export async function findOpenSubtitlesSpanish({
     });
   };
 
-  // Direct season/episode search (Wikipedia / Stremio S/E)
+  // Exact file match from other addons' playback (best sync)
+  if (videoHash && /^[a-f0-9]{16}$/i.test(videoHash)) {
+    const byHash = await osSearch(
+      `/search/moviehash-${videoHash.toLowerCase()}/sublanguageid-spa`
+    );
+    for (const row of byHash) push(row, 'OS ES · archivo');
+  }
+
+  // Direct season/episode search (Wikipedia / Stremio S/E from any addon meta)
   if (season != null && episode != null && season > 0) {
     const rows = await osSearch(
       `/search/episode-${episode}/imdbid-${IMDB_NUM}/season-${season}/sublanguageid-spa`
@@ -163,7 +176,15 @@ export async function findOpenSubtitlesSpanish({
     for (const row of rows) push(row, `OS ES · S${season}E${episode}`);
   }
 
-  // Absolute via cached filename index
+  // Absolute as Cinemeta S1:E{n}
+  if (absolute != null) {
+    const rowsAbs = await osSearch(
+      `/search/episode-${absolute}/imdbid-${IMDB_NUM}/season-1/sublanguageid-spa`
+    );
+    for (const row of rowsAbs) push(row, `OS ES · #${absolute}`);
+  }
+
+  // Absolute via cached filename index (DetectiveConan-0334.español.srt, …)
   if (absolute != null) {
     const byAbs = await getIndex();
     const rows = byAbs.get(absolute) || [];

@@ -8,6 +8,7 @@ import {
   getIndexSync,
 } from './cache.js';
 import { downloadOsSubtitle } from './subtitles/opensubtitles.js';
+import { setPublicBaseFromRequest } from './subtitles/public-base.js';
 
 const { getRouter } = addonSdk;
 const PORT = Number(process.env.PORT) || 7050;
@@ -28,7 +29,28 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
+  let url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
+
+  // Stremio SDK expects extras in the PATH:
+  //   /subtitles/series/<id>/<urlencoded-qs>.json
+  // Some clients (Nuvio, curl, browsers) send ?query= instead — rewrite.
+  const mSub = url.pathname.match(
+    /^(\/(?:subtitles|stream|meta)\/[^/]+\/[^/]+)\.json$/i
+  );
+  if (mSub && url.search && url.search.length > 1) {
+    const rewritten = `${mSub[1]}/${url.searchParams.toString()}.json`;
+    req.url = rewritten;
+    url = new URL(rewritten, `http://${req.headers.host || 'localhost'}`);
+  }
+
+  // So proxied OS subtitle URLs use the same host the client hit (tunnel / LAN)
+  if (
+    url.pathname.startsWith('/subtitles/') ||
+    url.pathname.startsWith('/stream/') ||
+    url.pathname.startsWith('/subs/')
+  ) {
+    setPublicBaseFromRequest(req, url);
+  }
 
   if (url.pathname === '/' || url.pathname === '/health') {
     const stats = getStats();

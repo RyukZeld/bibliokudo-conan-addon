@@ -1,21 +1,13 @@
 import { findOpenSubtitlesSpanish } from './opensubtitles.js';
 import { findXcordSpanish } from './xcord.js';
-import { parseStremioId } from '../episode-id.js';
+import { getPublicBase } from './public-base.js';
+import { resolveSubtitleQuery } from './resolve-query.js';
 
-/**
- * Public base URL for proxied subtitle downloads (OpenSubtitles gz → utf8).
- * Set PUBLIC_URL when using Cloudflare tunnel / Render.
- */
-export function publicBase() {
-  return (
-    process.env.PUBLIC_URL ||
-    process.env.ADDON_URL ||
-    `http://127.0.0.1:${process.env.PORT || 7050}`
-  ).replace(/\/$/, '');
-}
+export { getPublicBase, setPublicBaseFromRequest } from './public-base.js';
+export { resolveSubtitleQuery, absoluteFromFilename } from './resolve-query.js';
 
 function proxyUrl(downloadUrl, format, id) {
-  const base = publicBase();
+  const base = getPublicBase();
   const q = new URLSearchParams({
     u: downloadUrl,
     fmt: format || 'srt',
@@ -26,7 +18,7 @@ function proxyUrl(downloadUrl, format, id) {
 
 /**
  * Convert internal subtitle records to Stremio Subtitle Objects.
- * https://stremio.github.io/stremio-addon-sdk/api/responses/subtitles.html
+ * lang=es so Nuvio/Stremio pick them in the Spanish filter for any stream source.
  */
 export function toStremioSubtitles(records) {
   return records.map((r) => {
@@ -34,7 +26,7 @@ export function toStremioSubtitles(records) {
     return {
       id: r.id,
       url,
-      lang: r.lang || 'spa',
+      lang: r.lang || 'es',
       label: r.label || r.langLabel || 'Español',
     };
   });
@@ -47,12 +39,18 @@ export async function findSpanishSubtitles({
   absolute,
   season,
   episode,
+  videoHash,
 } = {}) {
-  if (!absolute && !(season && episode)) return [];
+  if (!absolute && !(season && episode) && !videoHash) return [];
 
   const [xcord, opensubs] = await Promise.all([
-    Promise.resolve(findXcordSpanish(absolute)),
-    findOpenSubtitlesSpanish({ absolute, season, episode }).catch((err) => {
+    Promise.resolve(absolute ? findXcordSpanish(absolute) : []),
+    findOpenSubtitlesSpanish({
+      absolute,
+      season,
+      episode,
+      videoHash,
+    }).catch((err) => {
       console.warn('[subs] OpenSubtitles failed:', err.message);
       return [];
     }),
@@ -65,24 +63,31 @@ export async function findSpanishSubtitles({
   for (const r of merged) {
     if (seen.has(r.id)) continue;
     seen.add(r.id);
+    // Normalize lang for players
+    r.lang = r.lang === 'spa' ? 'es' : r.lang || 'es';
     deduped.push(r);
   }
   return deduped;
 }
 
 /**
- * Resolve subtitles for a Stremio video id (series episode).
+ * Resolve subtitles for a Stremio/Nuvio request (any stream addon).
  */
-export async function subtitlesForVideoId(id) {
-  const parsed = parseStremioId(id);
-  // Lazy import to avoid circular deps at module load
-  const { resolveConanEpisode } = await import('../episode-id.js');
-  const resolved = resolveConanEpisode(id);
-  if (!resolved || resolved.type !== 'episode') return [];
+export async function subtitlesForRequest(args = {}) {
+  const q = resolveSubtitleQuery(args);
+  if (!q.isConan && !q.absolute) return [];
+
+  if (!q.absolute && !q.videoHash) return [];
 
   return findSpanishSubtitles({
-    absolute: resolved.absolute,
-    season: parsed?.season,
-    episode: parsed?.episode,
+    absolute: q.absolute,
+    season: q.season,
+    episode: q.episode,
+    videoHash: q.videoHash,
   });
+}
+
+/** @deprecated use subtitlesForRequest */
+export async function subtitlesForVideoId(id, extra) {
+  return subtitlesForRequest({ id, extra });
 }

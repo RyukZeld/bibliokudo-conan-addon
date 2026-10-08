@@ -19,7 +19,7 @@ import {
 import {
   findSpanishSubtitles,
   toStremioSubtitles,
-  subtitlesForVideoId,
+  subtitlesForRequest,
 } from './subtitles/index.js';
 
 const { addonBuilder } = addonSdk;
@@ -37,20 +37,33 @@ const MAX_RESOLVE = 3;
 
 export const manifest = {
   id: 'community.bibliokudo.detectiveconan',
-  version: '1.3.0',
+  version: '1.3.1',
   name: 'Detective Conan (BiblioKudo ES)',
   description:
-    'Streams + subtítulos fan en español de Detective Conan (BiblioKudo, OpenSubtitles, x-cord). Compatible con temporadas Stremio/Nuvio (S18 E2 → cap. absoluto).',
+    'Streams BiblioKudo + subtítulos ES (fan) para Detective Conan. Los softsubs aplican a streams de este addon y de otros (Torrentio, etc.) vía recurso subtitles.',
   logo: LOGO,
   background: BACKGROUND,
   resources: [
-    'catalog',
-    'meta',
-    'stream',
+    {
+      name: 'catalog',
+      types: ['series', 'movie'],
+      idPrefixes: ['bk:'],
+    },
+    {
+      name: 'meta',
+      types: ['series', 'movie'],
+      idPrefixes: ['tt', 'tmdb:', 'tvdb:', 'bk:', 'kitsu:', 'mal:', 'anilist:'],
+    },
+    {
+      name: 'stream',
+      types: ['series', 'movie'],
+      idPrefixes: ['tt', 'tmdb:', 'tvdb:', 'bk:', 'kitsu:', 'mal:', 'anilist:'],
+    },
+    // NO idPrefixes here — required so Nuvio/Stremio also ask us when another
+    // addon is playing (videoId, OpenSubtitles hash, torrent filename).
     {
       name: 'subtitles',
       types: ['series', 'movie'],
-      idPrefixes: ['tt', 'tmdb:', 'tvdb:', 'bk:', 'kitsu:', 'mal:', 'anilist:'],
     },
   ],
   types: ['series', 'movie'],
@@ -68,8 +81,7 @@ export const manifest = {
       extra: [{ name: 'search', isRequired: false }],
     },
   ],
-  // Answer stream requests for Cinemeta (tt), TMDB, TVDB and our bk: ids
-  idPrefixes: ['tt', 'tmdb:', 'tvdb:', 'bk:', 'kitsu:', 'mal:', 'anilist:'],
+  // Do NOT set global idPrefixes — it would block hash-based subtitle requests
   behaviorHints: {
     adultContent: false,
     configurable: false,
@@ -355,15 +367,19 @@ export function createAddon() {
     return { streams: [] };
   });
 
-  builder.defineSubtitlesHandler(async ({ type, id }) => {
-    if (type !== 'series' && type !== 'movie') {
+  builder.defineSubtitlesHandler(async (args) => {
+    const { type, id, extra } = args || {};
+    if (type && type !== 'series' && type !== 'movie') {
       return { subtitles: [] };
     }
     try {
-      const records = await subtitlesForVideoId(id);
+      // Works for BiblioKudo streams and third-party addons (Torrentio, …)
+      const records = await subtitlesForRequest({ id, extra });
       const subtitles = toStremioSubtitles(records);
-      console.log(`[subs] ${id} → ${subtitles.length} Spanish track(s)`);
-      return { subtitles, cacheMaxAge: 6 * 3600 };
+      console.log(
+        `[subs] id=${id} file=${extra?.filename || '-'} → ${subtitles.length} ES`
+      );
+      return { subtitles, cacheMaxAge: 3600 };
     } catch (err) {
       console.warn('[subs] handler error:', err.message);
       return { subtitles: [] };

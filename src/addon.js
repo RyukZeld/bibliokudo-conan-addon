@@ -33,22 +33,33 @@ import {
   GENRE_GUIAS,
   GENRE_PERSONAJES,
   GENRE_EXTRAS,
+  GENRE_ARCOS,
   GENRE_TEMPORADAS,
   GENRE_SERIE,
   GENRE_ESPECIALES,
+  proxiedSeriesArt,
 } from './watch-lists.js';
+import {
+  allListsIncludingSynthetic,
+  getSyntheticList,
+} from './synthetic-lists.js';
 import { findEpisode, findSpecial, findMovie } from './index-maps.js';
 import { createTtlCache } from './response-cache.js';
-import { SERIES_ART, movieArt, listArt } from './art.js';
+import { proxiedMovieArt, proxiedListArt, artProxyUrl } from './art-proxy.js';
+import {
+  isFembedUrl,
+  resolveFembed,
+} from './resolvers/fembed.js';
+import { loadConfig, configFromExtra } from './config.js';
 
 const { addonBuilder } = addonSdk;
 
 const streamCache = createTtlCache({ max: 300, name: 'streams' });
 const STREAM_TTL_MS = 5 * 60 * 1000;
 
-const POSTER = SERIES_ART.poster;
-const BACKGROUND = SERIES_ART.background;
-const LOGO = SERIES_ART.logo;
+function brandArt() {
+  return proxiedSeriesArt();
+}
 
 /** Catalog id (custom). Streams also answer Cinemeta/TMDB ids. */
 const SERIES_ID = 'bk:conan';
@@ -56,12 +67,12 @@ const MAX_RESOLVE = 3;
 
 export const manifest = {
   id: 'community.bibliokudo.detectiveconan',
-  version: '1.6.2',
+  version: '1.7.0',
   name: 'Detective Conan (BiblioKudo ES)',
   description:
     'Biblioteca Conan: serie, Listas A–D, personajes, extras, OVAs y temporadas. Filtra por género. Streams BiblioKudo + softsubs ES.',
-  logo: LOGO,
-  background: BACKGROUND,
+  logo: artProxyUrl('logo'),
+  background: artProxyUrl('series-bg'),
   resources: [
     {
       name: 'catalog',
@@ -108,8 +119,30 @@ export const manifest = {
   ],
   behaviorHints: {
     adultContent: false,
-    configurable: false,
+    configurable: true,
+    configurationRequired: false,
   },
+  config: [
+    {
+      key: 'defaultGuide',
+      type: 'select',
+      default: 'lista-b',
+      title: 'Guía destacada',
+      options: ['lista-b', 'lista-c', 'lista-a', 'lista-d'],
+    },
+    {
+      key: 'hideSeasons',
+      type: 'checkbox',
+      default: 'checked',
+      title: 'Ocultar temporadas en el home (usar filtro)',
+    },
+    {
+      key: 'preferSoftsubs',
+      type: 'checkbox',
+      default: 'checked',
+      title: 'Priorizar streams con softsubs ES',
+    },
+  ],
 };
 
 function normalizeQ(q) {
@@ -146,7 +179,20 @@ function filterBySearch(metas, q) {
 }
 
 function listsAsMetas(index, { group, ids, q } = {}) {
-  let lists = listsOrdered();
+  let lists = allListsIncludingSynthetic(index);
+  const orderedIds = listsOrdered().map((l) => l.id);
+  const groupRank = (g) =>
+    ({ guias: 0, personajes: 1, extras: 2, arcos: 3 }[g] ?? 9);
+  lists.sort((a, b) => {
+    const gr = groupRank(a.group) - groupRank(b.group);
+    if (gr) return gr;
+    const ia = orderedIds.indexOf(a.id);
+    const ib = orderedIds.indexOf(b.id);
+    if (ia !== -1 || ib !== -1) {
+      return (ia === -1 ? 900 : ia) - (ib === -1 ? 900 : ib);
+    }
+    return String(a.short || a.id).localeCompare(String(b.short || b.id));
+  });
   if (group) lists = lists.filter((l) => l.group === group);
   if (ids) {
     const set = new Set(ids);
@@ -163,10 +209,10 @@ function normalizeGenre(g) {
   if (/guia/.test(n)) return GENRE_GUIAS;
   if (/personaje/.test(n)) return GENRE_PERSONAJES;
   if (/ova|especial/.test(n)) return GENRE_ESPECIALES;
-  if (/extra|relleno|caso/.test(n)) return GENRE_EXTRAS;
+  if (/arco/.test(n)) return GENRE_ARCOS;
+  if (/extra|relleno|caso|canon|pelicula/.test(n)) return GENRE_EXTRAS;
   if (/temp/.test(n)) return GENRE_TEMPORADAS;
   if (/serie/.test(n)) return GENRE_SERIE;
-  // Exact chip match
   const hit = BIBLIOTECA_GENRES.find((x) => normalizeQ(x) === n);
   return hit || '';
 }
@@ -181,33 +227,54 @@ function isBroadConanQuery(q) {
 }
 
 /**
- * Home board: Serie + todas las listas (+ OVAs).
+ * Home board: Destacados → Serie + listas (+ OVAs/arcos).
  * Temporadas solo con el chip «Temporadas» (así no tapan las listas).
  */
-function buildBiblioteca(index, { genre, q, skip = 0 } = {}) {
-  // Broad queries ("conan") must return the full library — Nuvio Search uses this path.
+function buildBiblioteca(index, { genre, q, skip = 0, config } = {}) {
   if (q && !isBroadConanQuery(q)) return searchBiblioteca(index, q);
 
+  const cfg = config || loadConfig();
   const g = normalizeGenre(genre);
   const out = [];
+  const seen = new Set();
+  const push = (m) => {
+    if (!m?.id || seen.has(m.id)) return;
+    seen.add(m.id);
+    out.push(m);
+  };
 
   const wantSerie = !g || g === GENRE_SERIE;
   const wantGuias = !g || g === GENRE_GUIAS;
   const wantPers = !g || g === GENRE_PERSONAJES;
   const wantExtras = !g || g === GENRE_EXTRAS;
+  const wantArcos = !g || g === GENRE_ARCOS;
   const wantEspeciales = !g || g === GENRE_ESPECIALES;
-  // Seasons ONLY when explicitly filtered — keeps lists visible on home
   const wantSeasons = g === GENRE_TEMPORADAS;
 
-  if (wantSerie) out.push(seriesMeta(index, false));
-  if (wantGuias) out.push(...listsAsMetas(index, { group: 'guias' }));
-  if (wantPers) out.push(...listsAsMetas(index, { group: 'personajes' }));
-  if (wantExtras) out.push(...listsAsMetas(index, { group: 'extras' }));
-  if (wantEspeciales) out.push(ovasEspecialesMeta(index, false));
-  if (wantSeasons) {
-    for (const n of listSeasonNumbers(index)) {
-      out.push(seasonMeta(n, index, { full: false }));
+  // Featured row (only on full home, not filtered genres)
+  if (!g) {
+    const guideId = cfg.defaultGuide || 'lista-b';
+    const featuredIds = [guideId, 'hombres-negro', 'kid', 'solo-canon', 'movies-all'];
+    for (const fid of featuredIds) {
+      const hit = listsAsMetas(index, { ids: [fid] })[0];
+      if (hit) {
+        hit.releaseInfo = `Destacado · ${hit.releaseInfo || ''}`.trim();
+        push(hit);
+      }
     }
+    push(ovasEspecialesMeta(index, false));
+  }
+
+  if (wantSerie) push(seriesMeta(index, false));
+  if (wantGuias) for (const m of listsAsMetas(index, { group: 'guias' })) push(m);
+  if (wantPers) for (const m of listsAsMetas(index, { group: 'personajes' })) push(m);
+  if (wantExtras) for (const m of listsAsMetas(index, { group: 'extras' })) push(m);
+  if (wantArcos) for (const m of listsAsMetas(index, { group: 'arcos' })) push(m);
+  if (wantEspeciales) push(ovasEspecialesMeta(index, false));
+  if (wantSeasons && !cfg.hideSeasons) {
+    for (const n of listSeasonNumbers(index)) push(seasonMeta(n, index, { full: false }));
+  } else if (wantSeasons) {
+    for (const n of listSeasonNumbers(index)) push(seasonMeta(n, index, { full: false }));
   }
 
   if (skip > 0) return out.slice(skip);
@@ -279,9 +346,16 @@ function searchBiblioteca(index, q) {
   return out;
 }
 
+const SERIES_TRAILER = 'https://www.youtube.com/watch?v=ED8XaUxPf6U';
+const MOVIE_TRAILERS = {
+  1: 'https://www.youtube.com/watch?v=ED8XaUxPf6U',
+  20: 'https://www.youtube.com/watch?v=7YCqL8qF9kE',
+};
+
 function ovasEspecialesMeta(index, full = false) {
   const specials = index.specials || [];
-  const art = listArt('ovas');
+  const art = proxiedListArt('ovas');
+  const brand = brandArt();
   const videos = full
     ? specials.map((sp, i) => ({
         id: `${CONAN_IMDB}:0:${sp.specialIndex}`,
@@ -300,7 +374,7 @@ function ovasEspecialesMeta(index, full = false) {
     name: 'OVAs y especiales',
     poster: art.poster,
     background: art.background,
-    logo: LOGO,
+    logo: brand.logo,
     posterShape: 'poster',
     description: [
       'OVAs, Magic Files, episodios especiales y extras de BiblioKudo.',
@@ -316,11 +390,11 @@ function ovasEspecialesMeta(index, full = false) {
 }
 
 function seriesMeta(index, full = false) {
+  const brand = brandArt();
   const videos = [];
   if (full) {
     for (const ep of index.episodes) {
       const num = String(ep.episode).padStart(3, '0');
-      // Cinemeta-compatible absolute ids (season 1 = absolute numbering)
       videos.push({
         id: `${CONAN_IMDB}:1:${ep.episode}`,
         title: `${num}. ${ep.title}`,
@@ -346,58 +420,65 @@ function seriesMeta(index, full = false) {
     ? new Date(index.scrapedAt).toISOString().slice(0, 10)
     : '?';
   return {
-    // Same IMDb id as Cinemeta so Nuvio/Stremio merge catalogs
     id: CONAN_IMDB,
     imdb_id: CONAN_IMDB,
     type: 'series',
     name: 'Detective Conan · Serie completa',
-    poster: POSTER,
-    background: BACKGROUND,
-    logo: LOGO,
+    poster: brand.poster,
+    background: brand.background,
+    logo: brand.logo,
     posterShape: 'poster',
     description: [
       'Toda la serie Detective Conan en español (BiblioKudo).',
       `${index.stats.episodeCount} episodios · ${index.stats.movieCount} películas · ${index.stats.specialCount} especiales/OVAs.`,
       `Actualizado: ${when}`,
       '',
-      'Para ver filtrado: elige Guías (A–D), Personajes o Extras en el filtro de género de esta misma Biblioteca.',
+      'Para ver filtrado: usa el filtro de género (Guías, Personajes, Arcos, Extras…).',
     ].join('\n'),
     releaseInfo: `Serie · ${index.stats.episodeCount} eps`,
     genres: ['Anime', 'Misterio', GENRE_SERIE],
     runtime: '25 min',
+    imdbRating: '8.6',
+    trailer: SERIES_TRAILER,
     videos: full ? videos : undefined,
   };
 }
 
 function movieMeta(m) {
   const n = m.movieNumber;
-  const art = movieArt(n);
+  const art = proxiedMovieArt(n);
+  const brand = brandArt();
   return {
     id: `bk:movie:${n}`,
     type: 'movie',
     name: m.title || `Película ${n}`,
     poster: art.poster,
     background: art.background,
-    logo: LOGO,
+    logo: brand.logo,
     posterShape: 'poster',
     description: `Película ${n} de Detective Conan en español (BiblioKudo).${
       m.links?.length ? `\n${m.links.length} fuentes disponibles.` : ''
     }`,
     releaseInfo: `Película ${n}`,
     genres: ['Anime', 'Misterio', 'Película'],
+    trailer: MOVIE_TRAILERS[n] || SERIES_TRAILER,
   };
 }
 
-async function linksToStreams(links, { subtitles } = {}) {
+function softsubNote(hasSubs) {
+  return hasSubs
+    ? 'Softsubs ES disponibles (fansub / OpenSubtitles)'
+    : 'Solo hardsub BK (sin softsub fan para este cap)';
+}
+
+async function linksToStreams(links, { subtitles, preferSoftsubs = true } = {}) {
   const sorted = [...(links || [])].sort(
     (a, b) => streamSortKey(a) - streamSortKey(b)
   );
-  // Dedupe by host+role keeping first (best) of each host for streaming
   const seenHosts = new Set();
   const deduped = [];
   for (const link of sorted) {
     const role = effectiveRole(link);
-    // Allow up to 2 streamtape mirrors, 1 of everything else per role
     const stCount = deduped.filter(
       (l) => isStreamtapeUrl(l.url) && effectiveRole(l) === 'stream'
     ).length;
@@ -413,18 +494,23 @@ async function linksToStreams(links, { subtitles } = {}) {
 
   const streams = [];
   let resolved = 0;
-  const subTracks =
-    subtitles && subtitles.length ? toStremioSubtitles(subtitles) : undefined;
+  const hasSubs = Boolean(subtitles?.length);
+  const subTracks = hasSubs ? toStremioSubtitles(subtitles) : undefined;
 
   for (const link of deduped) {
     const name = streamName(link);
-    const description = streamDescription(link);
-    const wantResolve =
+    let description = [streamDescription(link), softsubNote(hasSubs)]
+      .filter(Boolean)
+      .join('\n');
+
+    const canResolveSt =
       (link.playable || effectiveRole(link) === 'stream') &&
       isStreamtapeUrl(link.url) &&
       resolved < MAX_RESOLVE;
+    const canResolveFe =
+      isFembedUrl(link.url) && resolved < MAX_RESOLVE;
 
-    if (wantResolve) {
+    if (canResolveSt) {
       resolved += 1;
       try {
         const media = await resolveStreamtape(link.url);
@@ -446,11 +532,38 @@ async function linksToStreams(links, { subtitles } = {}) {
                 },
               },
             },
+            _hasSoftsubs: hasSubs,
+            _playable: true,
           });
           continue;
         }
       } catch (err) {
         console.warn('[stream] streamtape resolve failed:', err.message);
+      }
+    }
+
+    if (canResolveFe) {
+      resolved += 1;
+      try {
+        const media = await resolveFembed(link.url);
+        if (media) {
+          streams.push({
+            name: `${name} ▶`,
+            title: name,
+            description,
+            url: media,
+            subtitles: subTracks,
+            behaviorHints: {
+              notWebReady: true,
+              bingeGroup: 'bk-fembed',
+            },
+            _hasSoftsubs: hasSubs,
+            _playable: true,
+          });
+          continue;
+        }
+      } catch (err) {
+        console.warn('[stream] fembed resolve failed:', err.message);
       }
     }
 
@@ -460,7 +573,23 @@ async function linksToStreams(links, { subtitles } = {}) {
       description: description || 'Abrir en navegador',
       externalUrl: link.url,
       subtitles: subTracks,
+      _hasSoftsubs: hasSubs,
+      _playable: false,
     });
+  }
+
+  if (preferSoftsubs && hasSubs) {
+    streams.sort((a, b) => {
+      const ap = a._playable ? 0 : 1;
+      const bp = b._playable ? 0 : 1;
+      if (ap !== bp) return ap - bp;
+      return 0;
+    });
+  }
+
+  for (const s of streams) {
+    delete s._hasSoftsubs;
+    delete s._playable;
   }
   return streams;
 }
@@ -487,6 +616,7 @@ export function createAddon() {
     await ensureIndex();
     const index = await getIndex();
     const q = (extra?.search || '').trim();
+    const config = configFromExtra(extra);
 
     // Single home board (+ Search). Genre chip = Guías / Personajes / …
     if (type === 'series' && id === 'bk-conan-biblioteca') {
@@ -495,6 +625,7 @@ export function createAddon() {
         genre: extra?.genre,
         q,
         skip,
+        config,
       });
       return { metas, cacheMaxAge: q ? 600 : 1800 };
     }
@@ -521,7 +652,7 @@ export function createAddon() {
 
     if (type === 'series' && id.startsWith('bk:list:')) {
       const listId = id.slice('bk:list:'.length);
-      const list = getList(listId);
+      const list = getList(listId) || getSyntheticList(listId, index);
       if (!list) return { meta: null };
       return {
         meta: listMeta(list, index, { full: true }),
@@ -570,18 +701,24 @@ export function createAddon() {
     return { meta: null };
   });
 
-  builder.defineStreamHandler(async ({ type, id }) => {
+  builder.defineStreamHandler(async ({ type, id, extra }) => {
     const cached = streamCache.get(`${type}:${id}`);
     if (cached) return cached;
 
     await ensureIndex();
     const index = await getIndex();
+    const config = configFromExtra(extra);
 
     const pack = async (streams) => {
       const body = { streams, cacheMaxAge: 300 };
       streamCache.set(`${type}:${id}`, body, STREAM_TTL_MS);
       return body;
     };
+
+    const streamOpts = (subs) => ({
+      subtitles: subs,
+      preferSoftsubs: config.preferSoftsubs,
+    });
 
     // Movies embedded in watch-lists are requested as series videos with bk:movie ids
     if (id.startsWith('bk:movie:')) {
@@ -591,7 +728,7 @@ export function createAddon() {
           ? findMovieInIndex(index, { movieKey: 'lupin' })
           : findMovie(index, Number(key));
       if (!m) return pack([]);
-      return pack(await linksToStreams(m.links));
+      return pack(await linksToStreams(m.links, streamOpts([])));
     }
 
     if (type === 'series' || type === 'movie') {
@@ -600,7 +737,7 @@ export function createAddon() {
         if (resolved.type === 'special') {
           const sp = findSpecial(index, resolved.specialIndex);
           if (!sp) return pack([]);
-          return pack(await linksToStreams(sp.links));
+          return pack(await linksToStreams(sp.links, streamOpts([])));
         }
         const ep = findEpisode(index, resolved.absolute);
         if (!ep) {
@@ -613,17 +750,7 @@ export function createAddon() {
         console.log(
           `[stream] ${id} → abs #${resolved.absolute} (${ep.title}) subs=${subs.length}`
         );
-        const streams = await linksToStreams(ep.links, { subtitles: subs });
-        if (!subs.length) {
-          for (const s of streams) {
-            const extra =
-              'Vídeo ES (hardsub BK). Softsubs fan no disponibles para este cap.';
-            s.description = s.description
-              ? `${s.description}\n${extra}`
-              : extra;
-          }
-        }
-        return pack(streams);
+        return pack(await linksToStreams(ep.links, streamOpts(subs)));
       }
 
       const parsed = parseStremioId(id);
@@ -631,7 +758,7 @@ export function createAddon() {
         if (parsed.season === 0) {
           const sp = findSpecial(index, parsed.episode);
           if (!sp) return pack([]);
-          return pack(await linksToStreams(sp.links));
+          return pack(await linksToStreams(sp.links, streamOpts([])));
         }
         const ep = findEpisode(index, parsed.episode);
         if (!ep) return pack([]);
@@ -640,7 +767,7 @@ export function createAddon() {
           season: 1,
           episode: parsed.episode,
         }).catch(() => []);
-        return pack(await linksToStreams(ep.links, { subtitles: subs }));
+        return pack(await linksToStreams(ep.links, streamOpts(subs)));
       }
     }
 

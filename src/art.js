@@ -191,6 +191,9 @@ const LIST_MOVIE = {
   nagano: 13,
   'mejores-rellenos': 6,
   'mejores-casos': 9,
+  'solo-canon': 3,
+  'solo-peliculas': 1,
+  'movies-all': 2,
   ovas: 3,
   seasons: 1,
 };

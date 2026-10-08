@@ -11,8 +11,12 @@ import {
   downloadOsSubtitle,
   warmSpanishIndex,
 } from './subtitles/opensubtitles.js';
-import { setPublicBaseFromRequest } from './subtitles/public-base.js';
+import {
+  setPublicBaseFromRequest,
+  getPublicBase,
+} from './subtitles/public-base.js';
 import { loadWatchLists } from './watch-lists.js';
+import { serveArtPoster, artCacheStats } from './art-proxy.js';
 
 const { getRouter } = addonSdk;
 const PORT = Number(process.env.PORT) || 7050;
@@ -47,13 +51,23 @@ const server = http.createServer(async (req, res) => {
     url = new URL(rewritten, `http://${req.headers.host || 'localhost'}`);
   }
 
-  // So proxied OS subtitle URLs use the same host the client hit (tunnel / LAN)
+  // So proxied OS subtitle / art URLs use the same host the client hit
   if (
     url.pathname.startsWith('/subtitles/') ||
     url.pathname.startsWith('/stream/') ||
-    url.pathname.startsWith('/subs/')
+    url.pathname.startsWith('/subs/') ||
+    url.pathname.startsWith('/art/') ||
+    url.pathname.startsWith('/catalog/') ||
+    url.pathname === '/manifest.json'
   ) {
     setPublicBaseFromRequest(req, url);
+  }
+
+  // Poster proxy: /art/poster/<key>
+  const artMatch = url.pathname.match(/^\/art\/poster\/([^/]+)$/i);
+  if (artMatch) {
+    await serveArtPoster(decodeURIComponent(artMatch[1]), res);
+    return;
   }
 
   if (url.pathname === '/' || url.pathname === '/health') {
@@ -64,14 +78,37 @@ const server = http.createServer(async (req, res) => {
     } catch {
       /* ignore */
     }
+    const snap = getIndexSync();
+    const scrapedAt = snap?.scrapedAt || null;
+    const ageHours = scrapedAt
+      ? Math.round((Date.now() - new Date(scrapedAt).getTime()) / 3600000)
+      : null;
+    const eps = snap?.episodes || [];
+    const withLinks = eps.filter((e) => e.links?.length).length;
     const body = JSON.stringify(
       {
         ok: true,
         name: manifest.name,
         version: manifest.version,
         manifest: '/manifest.json',
+        publicBase: getPublicBase(),
         catalogs: (manifest.catalogs || []).map((c) => c.id),
         watchLists: listCount,
+        snapshot: {
+          scrapedAt,
+          ageHours,
+          episodeCount: eps.length,
+          withLinks,
+          linkCoverage:
+            eps.length > 0
+              ? Math.round((withLinks / eps.length) * 1000) / 10
+              : null,
+          movieCount: snap?.movies?.length ?? null,
+          specialCount: snap?.specials?.length ?? null,
+        },
+        artCache: artCacheStats(),
+        softsubsNote:
+          'OpenSubtitles index + x-cord packs; see /health?probeSubs=1 for sample',
         ...stats,
       },
       null,

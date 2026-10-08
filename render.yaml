@@ -5,7 +5,11 @@ services:
     plan: free
     buildCommand: npm install
     startCommand: npm start
-    healthCheckPath: /manifest.json
+    healthCheckPath: /health
     envVars:
       - key: NODE_VERSION
         value: "20"
+      # After first deploy, set to https://<service>.onrender.com
+      - key: PUBLIC_URL
+        sync: false
+

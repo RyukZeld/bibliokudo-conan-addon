@@ -1,0 +1,43 @@
+name: Smoke
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  integrity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - run: npm ci
+      - run: node scripts/integrity-watch-lists.js
+
+  smoke:
+    runs-on: ubuntu-latest
+    needs: integrity
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - run: npm ci
+      - name: Start addon
+        run: |
+          PORT=7050 node src/server.js &
+          echo $! > /tmp/addon.pid
+          for i in $(seq 1 30); do
+            curl -sf http://127.0.0.1:7050/health && break
+            sleep 1
+          done
+      - run: npm run smoke
+        env:
+          SMOKE_URL: http://127.0.0.1:7050
+      - name: Stop
+        if: always()
+        run: kill $(cat /tmp/addon.pid) || true

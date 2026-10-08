@@ -4,7 +4,11 @@ import { fileURLToPath } from 'node:url';
 import { CONAN_IMDB, loadSeasonMap } from './episode-id.js';
 import { findEpisode, findSpecial, findMovie } from './index-maps.js';
 import { createTtlCache } from './response-cache.js';
-import { SERIES_ART, listArt, seasonArt } from './art.js';
+import {
+  proxiedListArt,
+  proxiedSeasonArt,
+  proxiedSeriesArt,
+} from './art-proxy.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const LISTS_PATH = path.join(__dirname, '..', 'data', 'watch-lists.json');
@@ -47,6 +51,16 @@ export const SEARCH_ALIASES = {
   nagano: ['yamato', 'morofushi', 'koumei'],
   'mejores-rellenos': ['filler', 'relleno', 'mejores fillers'],
   'mejores-casos': ['mejores', 'top', 'casos top', 'favoritos'],
+  'solo-canon': ['canon', 'sin relleno', 'solo canon', 'manga'],
+  'solo-peliculas': ['peliculas guia', 'solo peliculas', 'movies guide'],
+  'movies-all': ['todas las peliculas', 'all movies', 'films'],
+  'arco-hdn-intro': ['arco hdn', 'intro hdn'],
+  'arco-haibara': ['arco haibara', 'sherry'],
+  'arco-vs-kid': ['arco kid', 'vs kid'],
+  'arco-akira': ['rojo y negro', 'clash of red and black'],
+  'arco-bourbon': ['arco bourbon', 'arco amuro'],
+  'arco-rum': ['arco rum'],
+  'arco-wakasa': ['arco wakasa', 'kuroda'],
 };
 
 export function listSearchText(list) {
@@ -90,6 +104,7 @@ export function groupLabel(group) {
   if (group === 'guias') return 'Guía';
   if (group === 'personajes') return 'Personaje';
   if (group === 'extras') return 'Selección';
+  if (group === 'arcos') return 'Arco';
   return 'Lista';
 }
 
@@ -97,6 +112,7 @@ export function groupLabel(group) {
 export const GENRE_GUIAS = 'Guías';
 export const GENRE_PERSONAJES = 'Personajes';
 export const GENRE_EXTRAS = 'Extras';
+export const GENRE_ARCOS = 'Arcos';
 export const GENRE_TEMPORADAS = 'Temporadas';
 export const GENRE_SERIE = 'Serie';
 export const GENRE_ESPECIALES = 'OVAs / Especiales';
@@ -106,6 +122,7 @@ export const BIBLIOTECA_GENRES = [
   GENRE_GUIAS,
   GENRE_PERSONAJES,
   GENRE_EXTRAS,
+  GENRE_ARCOS,
   GENRE_ESPECIALES,
   GENRE_TEMPORADAS,
 ];
@@ -130,7 +147,19 @@ const PERSONAJE_ORDER = [
   'nagano',
 ];
 
-const GROUP_ORDER = { guias: 0, personajes: 1, extras: 2 };
+const GROUP_ORDER = { guias: 0, personajes: 1, extras: 2, arcos: 3 };
+
+/** Episodes tagged as filler via «mejores-rellenos» list. */
+let fillerSetCache = null;
+export function fillerEpisodeSet() {
+  if (fillerSetCache) return fillerSetCache;
+  const list = getList('mejores-rellenos');
+  fillerSetCache = new Set();
+  for (const it of list?.items || []) {
+    if (it.kind === 'episode' && it.episode) fillerSetCache.add(it.episode);
+  }
+  return fillerSetCache;
+}
 
 export function listsOrdered() {
   const lists = allLists();
@@ -158,6 +187,7 @@ function genreForGroup(group) {
   if (group === 'guias') return GENRE_GUIAS;
   if (group === 'personajes') return GENRE_PERSONAJES;
   if (group === 'extras') return GENRE_EXTRAS;
+  if (group === 'arcos') return GENRE_ARCOS;
   return 'Conan';
 }
 
@@ -179,6 +209,15 @@ function blurbForList(list) {
   }
   if (list.id === 'mejores-casos') {
     return 'Casos top por mérito propio (canon y relleno).';
+  }
+  if (list.id === 'solo-canon') {
+    return 'Trama principal sin la selección de rellenos.';
+  }
+  if (list.id === 'solo-peliculas' || list.id === 'movies-all') {
+    return 'Maratón de películas en orden.';
+  }
+  if (list.group === 'arcos') {
+    return 'Arco de trama por rangos de capítulos absolutos.';
   }
   return 'Selección curada de la guía de visionado.';
 }
@@ -234,8 +273,10 @@ export function buildAbsoluteToSeason() {
 }
 
 function artFor(listId) {
-  return listArt(listId);
+  return proxiedListArt(listId);
 }
+
+export { proxiedSeriesArt };
 
 /** Official OVAs 1–12 live at specialIndex 54–65 in our scrape. */
 export function ovaToSpecialIndex(ovaNumber) {
@@ -305,11 +346,12 @@ export function resolveListItem(item, index, absToSeason) {
     const ep = findEpisode(index, abs);
     if (!ep) return null;
     const season = absToSeason.get(abs) || 1;
+    const tag = fillerEpisodeSet().has(abs) ? 'Relleno' : 'Canon';
     return {
       videoId: `${CONAN_IMDB}:1:${abs}`,
       title: `${String(abs).padStart(3, '0')}. ${ep.title}`,
       season,
-      overview: `Cap. ${abs} · orden de la lista`,
+      overview: `${tag} · Cap. ${abs} · orden de la lista`,
       kind: 'episode',
       absolute: abs,
       hasLinks: Boolean(ep?.links?.length),
@@ -410,12 +452,12 @@ export function buildListVideos(list, index) {
 }
 
 export function listMeta(list, index, { full = false } = {}) {
-  // v2 in key so renamed cards don't stick in process cache after upgrades
-  const cacheKey = `list:v3:${list.id}:${full ? 'full' : 'card'}:${index.scrapedAt || ''}`;
+  const cacheKey = `list:v4:${list.id}:${full ? 'full' : 'card'}:${index.scrapedAt || ''}`;
   const hit = metaCache.get(cacheKey);
   if (hit) return hit;
 
   const art = artFor(list.id);
+  const seriesArt = proxiedSeriesArt();
   const videos = full ? buildListVideos(list, index) : undefined;
   const eps = (list.items || []).filter((i) => i.kind === 'episode').length;
   const movies = (list.items || []).filter((i) => i.kind === 'movie').length;
@@ -432,6 +474,12 @@ export function listMeta(list, index, { full = false } = {}) {
       : `${badge} · ${list.short}`;
 
   const genreChip = genreForGroup(list.group);
+  const recommended = list.id === 'lista-b' ? ' · Recomendada' : '';
+  const spoilers =
+    list.id === 'lista-d' || /spoiler/i.test(list.description || '')
+      ? ' · Spoilers'
+      : '';
+
   const parts = [
     list.description?.trim() || list.name,
     blurbForList(list),
@@ -448,12 +496,13 @@ export function listMeta(list, index, { full = false } = {}) {
     name: displayName,
     poster: art.poster,
     background: art.background,
-    logo: art.logo || SERIES_ART.logo,
+    logo: art.logo || seriesArt.logo,
     posterShape: 'poster',
     description: parts.filter((p) => p !== undefined).join('\n'),
-    releaseInfo: `${badge} · ${list.itemCount} entradas`,
+    releaseInfo: `${badge}${recommended}${spoilers} · ${list.itemCount} entradas`,
     genres: ['Anime', 'Misterio', genreChip],
     runtime: '25 min',
+    imdbRating: list.id === 'lista-b' ? '9.0' : list.group === 'guias' ? '8.5' : '8.0',
     videos,
   };
   metaCache.set(cacheKey, meta, META_TTL_MS);
@@ -461,7 +510,7 @@ export function listMeta(list, index, { full = false } = {}) {
 }
 
 export function seasonMeta(seasonNumber, index, { full = false } = {}) {
-  const cacheKey = `season:v3:${seasonNumber}:${full ? 'full' : 'card'}:${index.scrapedAt || ''}`;
+  const cacheKey = `season:v4:${seasonNumber}:${full ? 'full' : 'card'}:${index.scrapedAt || ''}`;
   const hit = metaCache.get(cacheKey);
   if (hit) return hit;
 
@@ -471,7 +520,9 @@ export function seasonMeta(seasonNumber, index, { full = false } = {}) {
   const episodes = (index.episodes || []).filter(
     (e) => absToSeason.get(e.episode) === seasonNumber
   );
-  const art = seasonArt(seasonNumber);
+  const art = proxiedSeasonArt(seasonNumber);
+  const seriesArt = proxiedSeriesArt();
+  const fillers = fillerEpisodeSet();
   const videos = full
     ? episodes.map((ep, i) => ({
         id: `${CONAN_IMDB}:1:${ep.episode}`,
@@ -479,7 +530,7 @@ export function seasonMeta(seasonNumber, index, { full = false } = {}) {
         season: seasonNumber,
         episode: i + 1,
         episodeNo: i + 1,
-        overview: `Cap. absoluto ${ep.episode} · Temporada ${seasonNumber}`,
+        overview: `${fillers.has(ep.episode) ? 'Relleno' : 'Canon'} · Cap. absoluto ${ep.episode} · T${seasonNumber}`,
       }))
     : undefined;
 
@@ -493,7 +544,7 @@ export function seasonMeta(seasonNumber, index, { full = false } = {}) {
     name: `Temporada ${n} · Caps ${first}–${last}`,
     poster: art.poster,
     background: art.background,
-    logo: SERIES_ART.logo,
+    logo: seriesArt.logo,
     posterShape: 'poster',
     description: [
       `Detective Conan — Temporada ${seasonNumber} (DVD / Case Closed).`,

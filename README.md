@@ -20,10 +20,12 @@ Health: https://wesley-spreading-threshold-forestry.trycloudflare.com/health
 
 | Catálogo | Contenido |
 |----------|-----------|
-| **Biblioteca Conan** | Serie completa, Listas A–D, personajes, extras, OVAs. Filtro de género: Serie / Guías / Personajes / Extras / OVAs / Temporadas |
+| **Biblioteca Conan** | Serie, Listas A–D, personajes, extras (canon/películas), arcos, OVAs. Filtros de género + destacados. Configurable. |
 | **Películas Conan** | Cada película como `movie` |
 
-Busca «Lista B», «Haibara», «Kid», «HdN»… Las listas incluyen caps + películas + OVAs en el orden de la guía PDF.
+Busca «Lista B», «Haibara», «Kid», «HdN», «canon»… Posters vía proxy del addon. Softsubs ES cuando existen.
+
+Despliegue 24/7: ver [DEPLOY.md](DEPLOY.md).
 
 ## Streams (botones BiblioKudo)
 

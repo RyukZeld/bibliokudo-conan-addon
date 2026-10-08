@@ -1,7 +1,7 @@
 {
   "name": "bibliokudo-conan-addon",
-  "version": "1.6.2",
-  "description": "Stremio/Nuvio addon for Detective Conan ES: single Biblioteca (guides, characters, seasons) + BiblioKudo streams + softsubs",
+  "version": "1.7.0",
+  "description": "Stremio/Nuvio addon for Detective Conan ES: Biblioteca, guides, arcs, softsubs, poster proxy",
   "type": "module",
   "main": "src/server.js",
   "scripts": {
@@ -10,7 +10,9 @@
     "snapshot": "node scripts/dump.js --write",
     "enrich": "node scripts/enrich-roles.js",
     "repair": "node scripts/repair-coverage.js",
-    "sanitize-lists": "node scripts/sanitize-watch-lists.js"
+    "sanitize-lists": "node scripts/sanitize-watch-lists.js",
+    "integrity": "node scripts/integrity-watch-lists.js",
+    "smoke": "node scripts/smoke-test.js"
   },
   "engines": {
     "node": ">=18"

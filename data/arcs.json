@@ -1,0 +1,61 @@
+{
+  "source": "Detective Conan major story arcs (absolute episode ranges)",
+  "arcs": [
+    {
+      "id": "arco-hdn-intro",
+      "name": "HdN · Introducción",
+      "short": "HdN intro",
+      "description": "Primeros contactos con la Organización de Negro.",
+      "from": 1,
+      "to": 128
+    },
+    {
+      "id": "arco-haibara",
+      "name": "Arco Haibara / Sherry",
+      "short": "Haibara",
+      "description": "Llegada de Haibara y revelaciones Miyano.",
+      "from": 129,
+      "to": 230
+    },
+    {
+      "id": "arco-vs-kid",
+      "name": "Conan vs Kaito Kid",
+      "short": "vs Kid",
+      "description": "Enfrentamientos destacados con el ladrón fantasma.",
+      "from": 76,
+      "to": 356
+    },
+    {
+      "id": "arco-akira",
+      "name": "Clash of Red and Black",
+      "short": "Rojo y Negro",
+      "description": "Arco largo FBI vs Organización (eps ~491–504 y entorno).",
+      "from": 491,
+      "to": 520
+    },
+    {
+      "id": "arco-bourbon",
+      "name": "Arco Bourbon / Amuro",
+      "short": "Bourbon",
+      "description": "Introducción y desarrollo de Furuya/Amuro.",
+      "from": 621,
+      "to": 700
+    },
+    {
+      "id": "arco-rum",
+      "name": "Arco Rum",
+      "short": "Rum",
+      "description": "Pista de Rum y arcos asociados en la Organización.",
+      "from": 860,
+      "to": 999
+    },
+    {
+      "id": "arco-wakasa",
+      "name": "Arco Wakasa / Kuroda",
+      "short": "Wakasa",
+      "description": "Hilos recientes de la trama principal.",
+      "from": 1000,
+      "to": 1203
+    }
+  ]
+}

@@ -2,6 +2,11 @@
 
 const HOST_LABELS = [
   { test: /streamtape\.com|stapadblockuser\.info/i, label: 'Streamtape', playable: true },
+  {
+    test: /fembed\.com|femax\d+\.com|vanfem\.com|feurl\.com|embedsito\.com/i,
+    label: 'Fembed',
+    playable: true,
+  },
   { test: /fireload\.com/i, label: 'Fireload', playable: false },
   { test: /terabox\.(app|com)/i, label: 'Terabox', playable: false },
   { test: /mediafire\.com/i, label: 'Mediafire', playable: false },
@@ -66,11 +71,13 @@ export function streamSortKey(link) {
   const playable = link.playable ? 0 : 1;
   const hostPrefer = /streamtape|stapadblock/i.test(link.url)
     ? 0
-    : /pluto|primevideo/i.test(link.url)
-      ? 1
-      : /fireload|mediafire|drive\.google|terabox/i.test(link.url)
-        ? 3
-        : 2;
+    : /fembed|vanfem|feurl|embedsito/i.test(link.url)
+      ? 0
+      : /pluto|primevideo/i.test(link.url)
+        ? 1
+        : /fireload|mediafire|drive\.google|terabox/i.test(link.url)
+          ? 3
+          : 2;
   return roleScore * 100 + playable * 10 + hostPrefer;
 }
 

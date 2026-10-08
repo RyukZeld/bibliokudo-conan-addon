@@ -4,3 +4,4 @@ node_modules/
 .env
 .cache/
 data/os-spanish-index.json
+data/art-cache/

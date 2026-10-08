@@ -134,7 +134,8 @@ async function mapPool(items, concurrency, fn) {
 
 async function buildSpanishIndex() {
   const byAbs = new Map();
-  const seasons = Array.from({ length: 30 }, (_, i) => i + 1);
+  // Cover Case Closed seasons through current Conan absolute range (~35)
+  const seasons = Array.from({ length: 35 }, (_, i) => i + 1);
   await mapPool(seasons, 4, async (season) => {
     const rows = await osSearch(
       `/search/imdbid-${IMDB_NUM}/season-${season}/sublanguageid-spa`

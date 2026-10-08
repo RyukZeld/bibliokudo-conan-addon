@@ -200,12 +200,14 @@ export const GENRE_PERSONAJES = 'Personajes';
 export const GENRE_EXTRAS = 'Extras';
 export const GENRE_TEMPORADAS = 'Temporadas';
 export const GENRE_SERIE = 'Serie';
+export const GENRE_ESPECIALES = 'OVAs / Especiales';
 
 export const BIBLIOTECA_GENRES = [
   GENRE_SERIE,
   GENRE_GUIAS,
   GENRE_PERSONAJES,
   GENRE_EXTRAS,
+  GENRE_ESPECIALES,
   GENRE_TEMPORADAS,
 ];
 
@@ -305,10 +307,13 @@ function blurbForList(list) {
 }
 
 let cached = null;
+let cachedMtime = 0;
 
 export function loadWatchLists() {
-  if (cached) return cached;
+  const st = fs.statSync(LISTS_PATH);
+  if (cached && st.mtimeMs === cachedMtime) return cached;
   cached = JSON.parse(fs.readFileSync(LISTS_PATH, 'utf8'));
+  cachedMtime = st.mtimeMs;
   return cached;
 }
 
@@ -415,18 +420,21 @@ export function findMovieInIndex(index, item) {
  * Resolve a list item to a playable video id + display fields.
  */
 export function resolveListItem(item, index, absToSeason) {
+  const maxEp = index.stats?.maxEpisode || 1500;
+
   if (item.kind === 'episode') {
-    const ep = findEpisode(index, item.episode);
-    const season = absToSeason.get(item.episode) || 1;
+    const abs = Number(item.episode);
+    if (!Number.isFinite(abs) || abs < 1 || abs > maxEp) return null;
+    const ep = findEpisode(index, abs);
+    if (!ep) return null;
+    const season = absToSeason.get(abs) || 1;
     return {
-      videoId: `${CONAN_IMDB}:1:${item.episode}`,
-      title: ep?.title
-        ? `${String(item.episode).padStart(3, '0')}. ${ep.title}`
-        : `${String(item.episode).padStart(3, '0')}. ${item.title}`,
+      videoId: `${CONAN_IMDB}:1:${abs}`,
+      title: `${String(abs).padStart(3, '0')}. ${ep.title}`,
       season,
-      overview: `Cap. ${item.episode} · orden de la lista`,
+      overview: `Cap. ${abs} · orden de la lista`,
       kind: 'episode',
-      absolute: item.episode,
+      absolute: abs,
       hasLinks: Boolean(ep?.links?.length),
     };
   }
@@ -434,6 +442,7 @@ export function resolveListItem(item, index, absToSeason) {
   if (item.kind === 'movie') {
     const movie = findMovieInIndex(index, item);
     const num = item.movieNumber;
+    if (!movie && item.movieKey !== 'lupin' && !Number.isFinite(num)) return null;
     return {
       videoId: movie
         ? `bk:movie:${movie.movieNumber}`
@@ -451,9 +460,10 @@ export function resolveListItem(item, index, absToSeason) {
 
   if (item.kind === 'ova') {
     const spIdx = ovaToSpecialIndex(item.ovaNumber);
-    const sp = spIdx != null ? findSpecial(index, spIdx) : null;
+    if (spIdx == null) return null;
+    const sp = findSpecial(index, spIdx);
     return {
-      videoId: spIdx ? `${CONAN_IMDB}:0:${spIdx}` : `bk:ova:${item.ovaNumber}`,
+      videoId: `${CONAN_IMDB}:0:${spIdx}`,
       title: sp?.title
         ? `OVA ${item.ovaNumber}. ${sp.title}`
         : `OVA ${item.ovaNumber}`,
@@ -467,15 +477,14 @@ export function resolveListItem(item, index, absToSeason) {
 
   if (item.kind === 'special') {
     const sp = findSpecialInIndex(index, item.title);
+    if (!sp) return null; // drop PDF prose / unmatched junk
     return {
-      videoId: sp
-        ? `${CONAN_IMDB}:0:${sp.specialIndex}`
-        : `bk:special:${encodeURIComponent(item.title)}`,
-      title: sp?.title || item.title,
+      videoId: `${CONAN_IMDB}:0:${sp.specialIndex}`,
+      title: sp.title,
       season: null,
       overview: 'Especial · orden de la guía',
       kind: 'special',
-      specialIndex: sp?.specialIndex,
+      specialIndex: sp.specialIndex,
       hasLinks: Boolean(sp?.links?.length),
     };
   }
@@ -493,10 +502,14 @@ export function buildListVideos(list, index) {
   const videos = [];
   let lastSeason = 1;
   const counters = new Map(); // season -> next episode number in that season
+  const seenIds = new Set();
 
   for (const item of list.items || []) {
     const resolved = resolveListItem(item, index, absToSeason);
-    if (!resolved) continue;
+    if (!resolved?.videoId) continue;
+    // Same playable id twice breaks progress UI — skip exact dupes
+    if (seenIds.has(resolved.videoId)) continue;
+    seenIds.add(resolved.videoId);
 
     let season = resolved.season;
     if (season == null) season = lastSeason;

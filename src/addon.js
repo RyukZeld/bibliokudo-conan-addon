@@ -35,6 +35,7 @@ import {
   GENRE_EXTRAS,
   GENRE_TEMPORADAS,
   GENRE_SERIE,
+  GENRE_ESPECIALES,
 } from './watch-lists.js';
 import { findEpisode, findSpecial, findMovie } from './index-maps.js';
 import { createTtlCache } from './response-cache.js';
@@ -57,10 +58,10 @@ const MAX_RESOLVE = 3;
 
 export const manifest = {
   id: 'community.bibliokudo.detectiveconan',
-  version: '1.6.0',
+  version: '1.6.1',
   name: 'Detective Conan (BiblioKudo ES)',
   description:
-    'Una sola Biblioteca Conan: serie, guías A–D, personajes, extras y temporadas (filtra por género). Streams BiblioKudo + softsubs ES.',
+    'Biblioteca Conan: serie, Listas A–D, personajes, extras, OVAs y temporadas. Filtra por género. Streams BiblioKudo + softsubs ES.',
   logo: LOGO,
   background: BACKGROUND,
   resources: [
@@ -163,6 +164,7 @@ function normalizeGenre(g) {
   if (!n || n === 'todas' || n === 'todo' || n === 'all') return '';
   if (/guia/.test(n)) return GENRE_GUIAS;
   if (/personaje/.test(n)) return GENRE_PERSONAJES;
+  if (/ova|especial/.test(n)) return GENRE_ESPECIALES;
   if (/extra|relleno|caso/.test(n)) return GENRE_EXTRAS;
   if (/temp/.test(n)) return GENRE_TEMPORADAS;
   if (/serie/.test(n)) return GENRE_SERIE;
@@ -172,8 +174,8 @@ function normalizeGenre(g) {
 }
 
 /**
- * Single board: Serie → Guías → Personajes → Extras → Temporadas.
- * Optional genre chip filters to one section.
+ * Home board: Serie + todas las listas (+ OVAs).
+ * Temporadas solo con el chip «Temporadas» (así no tapan las listas).
  */
 function buildBiblioteca(index, { genre, q, skip = 0 } = {}) {
   if (q) return searchBiblioteca(index, q);
@@ -185,12 +187,15 @@ function buildBiblioteca(index, { genre, q, skip = 0 } = {}) {
   const wantGuias = !g || g === GENRE_GUIAS;
   const wantPers = !g || g === GENRE_PERSONAJES;
   const wantExtras = !g || g === GENRE_EXTRAS;
-  const wantSeasons = !g || g === GENRE_TEMPORADAS;
+  const wantEspeciales = !g || g === GENRE_ESPECIALES;
+  // Seasons ONLY when explicitly filtered — keeps lists visible on home
+  const wantSeasons = g === GENRE_TEMPORADAS;
 
   if (wantSerie) out.push(seriesMeta(index, false));
   if (wantGuias) out.push(...listsAsMetas(index, { group: 'guias' }));
   if (wantPers) out.push(...listsAsMetas(index, { group: 'personajes' }));
   if (wantExtras) out.push(...listsAsMetas(index, { group: 'extras' }));
+  if (wantEspeciales) out.push(ovasEspecialesMeta(index, false));
   if (wantSeasons) {
     for (const n of listSeasonNumbers(index)) {
       out.push(seasonMeta(n, index, { full: false }));
@@ -235,6 +240,15 @@ function searchBiblioteca(index, q) {
   });
   for (const meta of listHits) push(meta);
 
+  const ovas = ovasEspecialesMeta(index, false);
+  if (
+    !q ||
+    metaMatchesSearch(ovas, q) ||
+    /ova|especial|magic file|magicfiles/.test(nq)
+  ) {
+    push(ovas);
+  }
+
   if (!q) return out;
 
   const seasonHit = nq.match(/(?:temp(?:orada)?|t|season)\s*0*(\d{1,2})\b/);
@@ -261,6 +275,41 @@ function searchBiblioteca(index, q) {
   }
 
   return out;
+}
+
+function ovasEspecialesMeta(index, full = false) {
+  const specials = index.specials || [];
+  const videos = full
+    ? specials.map((sp, i) => ({
+        id: `${CONAN_IMDB}:0:${sp.specialIndex}`,
+        title: sp.title || `Especial ${sp.specialIndex}`,
+        season: 1,
+        episode: i + 1,
+        episodeNo: i + 1,
+        overview: sp.kind
+          ? `${sp.kind} · BiblioKudo`
+          : 'OVA / especial · BiblioKudo',
+      }))
+    : undefined;
+  return {
+    id: 'bk:ovas',
+    type: 'series',
+    name: 'OVAs y especiales',
+    poster: 'https://cdn.myanimelist.net/images/anime/3/20986.jpg',
+    background: 'https://cdn.myanimelist.net/images/anime/3/20986l.jpg',
+    logo: LOGO,
+    posterShape: 'poster',
+    description: [
+      'OVAs, Magic Files, episodios especiales y extras de BiblioKudo.',
+      `${specials.length} títulos disponibles.`,
+      '',
+      'También aparecen intercalados en las Listas A–D cuando la guía los incluye.',
+    ].join('\n'),
+    releaseInfo: `OVAs · ${specials.length} títulos`,
+    genres: ['Anime', 'Misterio', GENRE_ESPECIALES],
+    runtime: '25–90 min',
+    videos,
+  };
 }
 
 function seriesMeta(index, full = false) {
@@ -507,6 +556,13 @@ export function createAddon() {
       };
     }
 
+    if (type === 'series' && id === 'bk:ovas') {
+      return {
+        meta: ovasEspecialesMeta(index, true),
+        cacheMaxAge: 1800,
+      };
+    }
+
     if (type === 'series' && id.startsWith('bk:season:')) {
       const n = Number(id.split(':')[2]);
       if (!Number.isFinite(n)) return { meta: null };
@@ -554,7 +610,18 @@ export function createAddon() {
       return body;
     };
 
-    if (type === 'series') {
+    // Movies embedded in watch-lists are requested as series videos with bk:movie ids
+    if (id.startsWith('bk:movie:')) {
+      const key = id.slice('bk:movie:'.length);
+      const m =
+        key === 'lupin'
+          ? findMovieInIndex(index, { movieKey: 'lupin' })
+          : findMovie(index, Number(key));
+      if (!m) return pack([]);
+      return pack(await linksToStreams(m.links));
+    }
+
+    if (type === 'series' || type === 'movie') {
       const resolved = resolveConanEpisode(id);
       if (resolved) {
         if (resolved.type === 'special') {
@@ -602,16 +669,6 @@ export function createAddon() {
         }).catch(() => []);
         return pack(await linksToStreams(ep.links, { subtitles: subs }));
       }
-    }
-
-    if (type === 'movie' && id.startsWith('bk:movie:')) {
-      const key = id.slice('bk:movie:'.length);
-      const m =
-        key === 'lupin'
-          ? findMovieInIndex(index, { movieKey: 'lupin' })
-          : findMovie(index, Number(key));
-      if (!m) return pack([]);
-      return pack(await linksToStreams(m.links));
     }
 
     return pack([]);

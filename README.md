@@ -20,8 +20,10 @@ Health: https://wesley-spreading-threshold-forestry.trycloudflare.com/health
 
 | Catálogo | Contenido |
 |----------|-----------|
-| **Detective Conan (ES)** | Anime (temp. 1, caps. 1…12xx) + OVAs/especiales (temp. 0) |
-| **Detective Conan Películas** | Cada película como `movie` |
+| **Biblioteca Conan** | Serie completa, Listas A–D, personajes, extras, OVAs. Filtro de género: Serie / Guías / Personajes / Extras / OVAs / Temporadas |
+| **Películas Conan** | Cada película como `movie` |
+
+Busca «Lista B», «Haibara», «Kid», «HdN»… Las listas incluyen caps + películas + OVAs en el orden de la guía PDF.
 
 ## Streams (botones BiblioKudo)
 

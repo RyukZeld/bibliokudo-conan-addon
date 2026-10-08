@@ -7,8 +7,12 @@ import {
   getStats,
   getIndexSync,
 } from './cache.js';
-import { downloadOsSubtitle } from './subtitles/opensubtitles.js';
+import {
+  downloadOsSubtitle,
+  warmSpanishIndex,
+} from './subtitles/opensubtitles.js';
 import { setPublicBaseFromRequest } from './subtitles/public-base.js';
+import { loadWatchLists } from './watch-lists.js';
 
 const { getRouter } = addonSdk;
 const PORT = Number(process.env.PORT) || 7050;
@@ -54,18 +58,29 @@ const server = http.createServer(async (req, res) => {
 
   if (url.pathname === '/' || url.pathname === '/health') {
     const stats = getStats();
+    let listCount = 0;
+    try {
+      listCount = Object.keys(loadWatchLists().lists || {}).length;
+    } catch {
+      /* ignore */
+    }
     const body = JSON.stringify(
       {
         ok: true,
         name: manifest.name,
         version: manifest.version,
         manifest: '/manifest.json',
+        catalogs: (manifest.catalogs || []).map((c) => c.id),
+        watchLists: listCount,
         ...stats,
       },
       null,
       2
     );
-    res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+    res.writeHead(200, {
+      'Content-Type': 'application/json; charset=utf-8',
+      'Cache-Control': 'no-store',
+    });
     res.end(body);
     return;
   }
@@ -124,13 +139,16 @@ server.listen(PORT, '0.0.0.0', () => {
     );
   }
   ensureIndex().catch((err) => console.error('[server] warm failed:', err));
-  // Warm OpenSubtitles Spanish index in background (first request otherwise ~10s)
-  import('./subtitles/opensubtitles.js')
-    .then((m) =>
-      m.findOpenSubtitlesSpanish({ absolute: 1 }).catch(() => [])
-    )
-    .then((r) =>
-      console.log(`[server] subtitle index warm: ${r?.length ?? 0} for #1`)
-    )
-    .catch((err) => console.warn('[server] subtitle warm failed:', err.message));
+  // Single-flight warm of OpenSubtitles Spanish index (disk cache if present)
+  warmSpanishIndex().then((byAbs) => {
+    console.log(
+      `[server] subtitle index warm: ${byAbs?.size ?? 0} absolute eps`
+    );
+  });
+  try {
+    const n = Object.keys(loadWatchLists().lists || {}).length;
+    console.log(`[server] watch lists loaded: ${n}`);
+  } catch (err) {
+    console.warn('[server] watch lists:', err.message);
+  }
 });

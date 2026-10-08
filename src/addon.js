@@ -29,8 +29,13 @@ import {
   listSeasonNumbers,
   findMovieInIndex,
 } from './watch-lists.js';
+import { findEpisode, findSpecial, findMovie } from './index-maps.js';
+import { createTtlCache } from './response-cache.js';
 
 const { addonBuilder } = addonSdk;
+
+const streamCache = createTtlCache({ max: 300, name: 'streams' });
+const STREAM_TTL_MS = 5 * 60 * 1000;
 
 const POSTER =
   'https://cdn.myanimelist.net/images/anime/7/73936.jpg';
@@ -45,10 +50,10 @@ const MAX_RESOLVE = 3;
 
 export const manifest = {
   id: 'community.bibliokudo.detectiveconan',
-  version: '1.4.0',
+  version: '1.4.1',
   name: 'Detective Conan (BiblioKudo ES)',
   description:
-    'Detective Conan en ES (BiblioKudo): temporadas, guías de visionado (Listas A–D + personajes), películas/OVAs en orden, streams y subtítulos fan.',
+    'Detective Conan en ES (BiblioKudo): temporadas, guías A–D, personajes, películas/OVAs en orden, streams y subtítulos fan. Caché y búsquedas optimizadas.',
   logo: LOGO,
   background: BACKGROUND,
   resources: [
@@ -84,7 +89,10 @@ export const manifest = {
       type: 'series',
       id: 'bk-conan-seasons',
       name: 'Por temporadas',
-      extra: [{ name: 'search', isRequired: false }],
+      extra: [
+        { name: 'search', isRequired: false },
+        { name: 'skip', isRequired: false },
+      ],
     },
     {
       type: 'series',
@@ -290,35 +298,38 @@ export function createAddon() {
 
     if (type === 'series' && id === 'bk-conan-series') {
       const meta = seriesMeta(index, false);
-      return { metas: filterBySearch([meta], q) };
+      return { metas: filterBySearch([meta], q), cacheMaxAge: 3600 };
     }
 
     if (type === 'series' && id === 'bk-conan-seasons') {
-      const metas = listSeasonNumbers(index).map((n) =>
+      let metas = listSeasonNumbers(index).map((n) =>
         seasonMeta(n, index, { full: false })
       );
-      return { metas: filterBySearch(metas, q) };
+      metas = filterBySearch(metas, q);
+      const skip = Math.max(0, Number(extra?.skip) || 0);
+      if (skip) metas = metas.slice(skip);
+      return { metas, cacheMaxAge: 3600 };
     }
 
     if (type === 'series' && id === 'bk-conan-guias') {
       const metas = allLists()
         .filter((l) => l.group === 'guias')
         .map((l) => listMeta(l, index, { full: false }));
-      return { metas: filterBySearch(metas, q) };
+      return { metas: filterBySearch(metas, q), cacheMaxAge: 3600 };
     }
 
     if (type === 'series' && id === 'bk-conan-personajes') {
       const metas = allLists()
         .filter((l) => l.group === 'personajes')
         .map((l) => listMeta(l, index, { full: false }));
-      return { metas: filterBySearch(metas, q) };
+      return { metas: filterBySearch(metas, q), cacheMaxAge: 3600 };
     }
 
     if (type === 'series' && id === 'bk-conan-extras') {
       const metas = allLists()
         .filter((l) => l.group === 'extras')
         .map((l) => listMeta(l, index, { full: false }));
-      return { metas: filterBySearch(metas, q) };
+      return { metas: filterBySearch(metas, q), cacheMaxAge: 3600 };
     }
 
     if (type === 'movie' && id === 'bk-conan-movies') {
@@ -330,7 +341,7 @@ export function createAddon() {
             String(m.movieNumber).includes(q)
         );
       }
-      return { metas: movies.map(movieMeta) };
+      return { metas: movies.map(movieMeta), cacheMaxAge: 3600 };
     }
 
     return { metas: [] };
@@ -344,13 +355,19 @@ export function createAddon() {
       const listId = id.slice('bk:list:'.length);
       const list = getList(listId);
       if (!list) return { meta: null };
-      return { meta: listMeta(list, index, { full: true }) };
+      return {
+        meta: listMeta(list, index, { full: true }),
+        cacheMaxAge: 1800,
+      };
     }
 
     if (type === 'series' && id.startsWith('bk:season:')) {
       const n = Number(id.split(':')[2]);
       if (!Number.isFinite(n)) return { meta: null };
-      return { meta: seasonMeta(n, index, { full: true }) };
+      return {
+        meta: seasonMeta(n, index, { full: true }),
+        cacheMaxAge: 1800,
+      };
     }
 
     if (
@@ -360,7 +377,7 @@ export function createAddon() {
         id === CONAN_IMDB ||
         isConanSeriesId(id))
     ) {
-      return { meta: seriesMeta(index, true) };
+      return { meta: seriesMeta(index, true), cacheMaxAge: 1800 };
     }
 
     if (type === 'movie' && id.startsWith('bk:movie:')) {
@@ -368,69 +385,76 @@ export function createAddon() {
       if (key === 'lupin') {
         const m = findMovieInIndex(index, { movieKey: 'lupin' });
         if (!m) return { meta: null };
-        return { meta: movieMeta(m) };
+        return { meta: movieMeta(m), cacheMaxAge: 1800 };
       }
-      const num = Number(key);
-      const m = index.movies.find((x) => x.movieNumber === num);
+      const m = findMovie(index, Number(key));
       if (!m) return { meta: null };
-      return { meta: movieMeta(m) };
+      return { meta: movieMeta(m), cacheMaxAge: 1800 };
     }
 
     return { meta: null };
   });
 
   builder.defineStreamHandler(async ({ type, id }) => {
+    const cached = streamCache.get(`${type}:${id}`);
+    if (cached) return cached;
+
     await ensureIndex();
     const index = await getIndex();
+
+    const pack = async (streams) => {
+      const body = { streams, cacheMaxAge: 300 };
+      streamCache.set(`${type}:${id}`, body, STREAM_TTL_MS);
+      return body;
+    };
 
     if (type === 'series') {
       const resolved = resolveConanEpisode(id);
       if (resolved) {
         if (resolved.type === 'special') {
-          const sp = index.specials.find(
-            (s) => s.specialIndex === resolved.specialIndex
-          );
-          if (!sp) return { streams: [] };
-          return { streams: await linksToStreams(sp.links) };
+          const sp = findSpecial(index, resolved.specialIndex);
+          if (!sp) return pack([]);
+          return pack(await linksToStreams(sp.links));
         }
-        const ep = index.episodes.find((e) => e.episode === resolved.absolute);
+        const ep = findEpisode(index, resolved.absolute);
         if (!ep) {
           console.warn(
             `[stream] no episode ${resolved.absolute} for id=${id}`
           );
-          return { streams: [] };
+          return pack([]);
         }
         const subs = await subsForResolved(resolved, id);
         console.log(
           `[stream] ${id} → abs #${resolved.absolute} (${ep.title}) subs=${subs.length}`
         );
         const streams = await linksToStreams(ep.links, { subtitles: subs });
-        // BiblioKudo encodes Spanish hardsubs; softsubs cover JP audio / early eps
         if (!subs.length) {
           for (const s of streams) {
-            const extra = 'Vídeo ES (hardsub BK). Softsubs fan no disponibles para este cap.';
-            s.description = s.description ? `${s.description}\n${extra}` : extra;
+            const extra =
+              'Vídeo ES (hardsub BK). Softsubs fan no disponibles para este cap.';
+            s.description = s.description
+              ? `${s.description}\n${extra}`
+              : extra;
           }
         }
-        return { streams };
+        return pack(streams);
       }
 
-      // Legacy bk:conan:N / bk:conan:s0:N if resolver missed
       const parsed = parseStremioId(id);
       if (parsed?.seriesId === 'bk:conan') {
         if (parsed.season === 0) {
-          const sp = index.specials.find((s) => s.specialIndex === parsed.episode);
-          if (!sp) return { streams: [] };
-          return { streams: await linksToStreams(sp.links) };
+          const sp = findSpecial(index, parsed.episode);
+          if (!sp) return pack([]);
+          return pack(await linksToStreams(sp.links));
         }
-        const ep = index.episodes.find((e) => e.episode === parsed.episode);
-        if (!ep) return { streams: [] };
+        const ep = findEpisode(index, parsed.episode);
+        if (!ep) return pack([]);
         const subs = await findSpanishSubtitles({
           absolute: parsed.episode,
           season: 1,
           episode: parsed.episode,
         }).catch(() => []);
-        return { streams: await linksToStreams(ep.links, { subtitles: subs }) };
+        return pack(await linksToStreams(ep.links, { subtitles: subs }));
       }
     }
 
@@ -439,12 +463,12 @@ export function createAddon() {
       const m =
         key === 'lupin'
           ? findMovieInIndex(index, { movieKey: 'lupin' })
-          : index.movies.find((x) => x.movieNumber === Number(key));
-      if (!m) return { streams: [] };
-      return { streams: await linksToStreams(m.links) };
+          : findMovie(index, Number(key));
+      if (!m) return pack([]);
+      return pack(await linksToStreams(m.links));
     }
 
-    return { streams: [] };
+    return pack([]);
   });
 
   builder.defineSubtitlesHandler(async (args) => {

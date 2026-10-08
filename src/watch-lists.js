@@ -2,9 +2,17 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CONAN_IMDB, loadSeasonMap } from './episode-id.js';
+import { findEpisode, findSpecial, findMovie } from './index-maps.js';
+import { createTtlCache } from './response-cache.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const LISTS_PATH = path.join(__dirname, '..', 'data', 'watch-lists.json');
+
+const metaCache = createTtlCache({ max: 80, name: 'list-meta' });
+const META_TTL_MS = 10 * 60 * 1000;
+
+/** @type {Map<number, number> | null} */
+let absToSeasonCache = null;
 
 /** Distinct posters / backgrounds per catalog (MAL / official art). */
 export const ART = {
@@ -146,8 +154,9 @@ export function allLists() {
   return Object.values(loadWatchLists().lists || {});
 }
 
-/** Build absolute → Wikipedia DVD season using seasonStarts. */
+/** Build absolute → Wikipedia DVD season using seasonStarts (memoized). */
 export function buildAbsoluteToSeason() {
+  if (absToSeasonCache) return absToSeasonCache;
   const map = loadSeasonMap();
   const starts = map.seasonStarts || {};
   const entries = Object.entries(starts)
@@ -164,7 +173,6 @@ export function buildAbsoluteToSeason() {
       absToSeason.set(abs, season);
     }
   }
-  // Prefer explicit seMap overrides
   for (const [key, abs] of Object.entries(
     map.seasonEpisodeToAbsolute || {}
   )) {
@@ -173,6 +181,7 @@ export function buildAbsoluteToSeason() {
       absToSeason.set(Number(abs), season);
     }
   }
+  absToSeasonCache = absToSeason;
   return absToSeason;
 }
 
@@ -231,11 +240,7 @@ export function findMovieInIndex(index, item) {
     );
   }
   if (item.movieNumber != null) {
-    return (
-      (index.movies || []).find(
-        (m) => m.movieNumber === item.movieNumber
-      ) || null
-    );
+    return findMovie(index, item.movieNumber);
   }
   return null;
 }
@@ -245,9 +250,7 @@ export function findMovieInIndex(index, item) {
  */
 export function resolveListItem(item, index, absToSeason) {
   if (item.kind === 'episode') {
-    const ep = (index.episodes || []).find(
-      (e) => e.episode === item.episode
-    );
+    const ep = findEpisode(index, item.episode);
     const season = absToSeason.get(item.episode) || 1;
     return {
       videoId: `${CONAN_IMDB}:1:${item.episode}`,
@@ -282,9 +285,7 @@ export function resolveListItem(item, index, absToSeason) {
 
   if (item.kind === 'ova') {
     const spIdx = ovaToSpecialIndex(item.ovaNumber);
-    const sp = (index.specials || []).find(
-      (s) => s.specialIndex === spIdx
-    );
+    const sp = spIdx != null ? findSpecial(index, spIdx) : null;
     return {
       videoId: spIdx ? `${CONAN_IMDB}:0:${spIdx}` : `bk:ova:${item.ovaNumber}`,
       title: sp?.title
@@ -353,6 +354,10 @@ export function buildListVideos(list, index) {
 }
 
 export function listMeta(list, index, { full = false } = {}) {
+  const cacheKey = `list:${list.id}:${full ? 'full' : 'card'}:${index.scrapedAt || ''}`;
+  const hit = metaCache.get(cacheKey);
+  if (hit) return hit;
+
   const art = artFor(list.id);
   const videos = full ? buildListVideos(list, index) : undefined;
   const eps = (list.items || []).filter((i) => i.kind === 'episode').length;
@@ -362,7 +367,7 @@ export function listMeta(list, index, { full = false } = {}) {
     (i) => i.kind === 'special'
   ).length;
 
-  return {
+  const meta = {
     id: `bk:list:${list.id}`,
     type: 'series',
     name: list.name,
@@ -375,9 +380,15 @@ export function listMeta(list, index, { full = false } = {}) {
     genres: ['Anime', 'Misterio', 'Guía'],
     videos,
   };
+  metaCache.set(cacheKey, meta, META_TTL_MS);
+  return meta;
 }
 
 export function seasonMeta(seasonNumber, index, { full = false } = {}) {
+  const cacheKey = `season:${seasonNumber}:${full ? 'full' : 'card'}:${index.scrapedAt || ''}`;
+  const hit = metaCache.get(cacheKey);
+  if (hit) return hit;
+
   const absToSeason = buildAbsoluteToSeason();
   const map = loadSeasonMap();
   const start = map.seasonStarts?.[String(seasonNumber)];
@@ -399,7 +410,7 @@ export function seasonMeta(seasonNumber, index, { full = false } = {}) {
   const first = episodes[0]?.episode ?? start ?? '?';
   const last = episodes[episodes.length - 1]?.episode ?? '?';
 
-  return {
+  const meta = {
     id: `bk:season:${seasonNumber}`,
     type: 'series',
     name: `Detective Conan — Temporada ${seasonNumber}`,
@@ -412,6 +423,8 @@ export function seasonMeta(seasonNumber, index, { full = false } = {}) {
     genres: ['Anime', 'Misterio'],
     videos,
   };
+  metaCache.set(cacheKey, meta, META_TTL_MS);
+  return meta;
 }
 
 export function listSeasonNumbers(index) {

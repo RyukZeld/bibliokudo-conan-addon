@@ -3,3 +3,4 @@ node_modules/
 *.log
 .env
 .cache/
+data/os-spanish-index.json

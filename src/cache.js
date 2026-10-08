@@ -3,6 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { scrapeAll, scrapeLive } from './scraper.js';
 import { enrichIndexRoles } from './hosts.js';
+import { ensureIndexMaps } from './index-maps.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SNAPSHOT_PATH = path.join(__dirname, '..', 'data', 'index.json');
@@ -21,7 +22,9 @@ export function loadSnapshot() {
   try {
     if (fs.existsSync(SNAPSHOT_PATH)) {
       const raw = fs.readFileSync(SNAPSHOT_PATH, 'utf8');
-      return enrichIndexRoles(JSON.parse(raw));
+      const data = enrichIndexRoles(JSON.parse(raw));
+      ensureIndexMaps(data);
+      return data;
     }
   } catch (err) {
     console.warn('[cache] snapshot load failed:', err.message);
@@ -85,6 +88,7 @@ async function doFullRefresh() {
     );
   }
   index = data;
+  ensureIndexMaps(index);
   lastFull = Date.now();
   lastLive = Date.now();
   lastError = null;
@@ -100,6 +104,7 @@ async function doLiveRefresh() {
   console.log('[cache] live refresh starting…');
   const data = enrichIndexRoles(await scrapeLive(index));
   index = data;
+  ensureIndexMaps(index);
   lastLive = Date.now();
   lastError = null;
   saveSnapshot(data);

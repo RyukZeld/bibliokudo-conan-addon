@@ -9,12 +9,12 @@ Repo: https://github.com/RyukZeld/bibliokudo-conan-addon
 Pega esto en Stremio (Addons → Addon Repository URL) o en Nuvio:
 
 ```
-https://wesley-spreading-threshold-forestry.trycloudflare.com/manifest.json
+https://bibliokudo-conan-1079186437265.us-east1.run.app/manifest.json
 ```
 
-Health: https://wesley-spreading-threshold-forestry.trycloudflare.com/health
+Health: https://bibliokudo-conan-1079186437265.us-east1.run.app/health
 
-> Esa URL es un túnel Cloudflare hacia este Mac (Fly.io pide tarjeta para apps nuevas). Mientras el Mac esté encendido y el addon corriendo, funciona. Para hosting 24/7: conecta el repo a [Render](https://dashboard.render.com) (Blueprint `render.yaml`) o añade tarjeta en Fly y `fly deploy`.
+> Hosting 24/7 en **Google Cloud Run** (proyecto `glaze-music`). El primer hit tras inactividad puede tardar unos segundos (cold start).
 
 ## Catálogos
 

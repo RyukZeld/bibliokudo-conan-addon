@@ -1,6 +1,24 @@
 # Deploy 24/7 (dejar el túnel Cloudflare)
 
-## Render (recomendado gratis)
+## Producción actual (Cloud Run)
+
+```
+https://bibliokudo-conan-1079186437265.us-east1.run.app/manifest.json
+```
+
+Proyecto GCP: `glaze-music` · región `us-east1` · servicio `bibliokudo-conan`
+
+Redeploy:
+
+```bash
+IMG=us-east1-docker.pkg.dev/glaze-music/bibliokudo/conan:latest
+gcloud builds submit --tag "$IMG" --project=glaze-music
+gcloud run deploy bibliokudo-conan --project=glaze-music --region=us-east1 \
+  --image="$IMG" --allow-unauthenticated --port=8080 \
+  --update-env-vars=PUBLIC_URL=https://bibliokudo-conan-1079186437265.us-east1.run.app
+```
+
+## Render (alternativa)
 
 1. Conecta el repo `RyukZeld/bibliokudo-conan-addon` en [Render](https://dashboard.render.com).
 2. Usa el Blueprint [`render.yaml`](render.yaml) o crea un **Web Service**:
